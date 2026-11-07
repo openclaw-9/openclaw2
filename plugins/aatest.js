@@ -1,5 +1,3 @@
-
-
 // plugins/channelstatus.js
 import { fileURLToPath } from 'url';
 import { cmd } from '../command.js';
@@ -10,19 +8,19 @@ cmd({
     pattern: "channelstatus",
     alias: ["cstatus", "chstatus"],
     react: "📗",
-    desc: "Owner Only - Post status on WhatsApp channel (24h)",
+    desc: "Owner Only - Post a 24h status on a WhatsApp channel",
     category: "owner",
     filename: __filename
 }, async (client, message, m, { from, isCreator, args, text }) => {
     try {
         if (!isCreator) {
-            return await client.sendMessage(from, { text: "*📛 This is an owner command.*" }, { quoted: message });
+            return await client.sendMessage(from, { text: "*This is an owner command.*" }, { quoted: message });
         }
 
-        // --- Channel JID nikalo ---
+        // --- Find channel JID ---
         let jid = null;
 
-        // 1) Channel link diya ho (whatsapp.com/channel/XXXX)
+        // 1) Channel invite link
         let link = args?.find(a => a.includes('whatsapp.com/channel/'));
         if (link) {
             let code = link.split('/channel/')[1].split(/[?#\s]/)[0];
@@ -30,54 +28,60 @@ cmd({
             jid = meta.id;
         }
 
-        // 2) Direct JID diya ho (1234567@newsletter)
+        // 2) Direct newsletter JID
         if (!jid) {
             let direct = args?.find(a => /^\d+@newsletter$/.test(a));
             if (direct) jid = direct;
         }
 
-        // 3) Kisi channel ke message pe reply kiya ho
+        // 3) Reply to a channel message
         if (!jid && m.quoted && m.quoted.chat && m.quoted.chat.endsWith('@newsletter')) {
             jid = m.quoted.chat;
         }
 
         if (!jid) {
             return await client.sendMessage(from, { text:
-                "*📗 Channel nahi mila! Istemaal:*\n\n" +
+                "*Channel not found! Usage:*\n\n" +
                 "`.cstatus <channel-jid> <text>`\n" +
                 "`.cstatus <channel link> <text>`\n\n" +
-                "Ya kisi channel message pe reply karke:\n" +
+                "Or reply to any channel message:\n" +
                 "`.cstatus <text>`"
             }, { quoted: message });
         }
 
-        // --- Caption/text nikaalo ---
+        // --- Extract text / media ---
         let body = (text && text.trim()) || m.quoted?.text || m.quoted?.caption || '';
-
-        // --- Media nikaalo (reply wali cheez se) ---
         let q = m.quoted ? m.quoted : m;
         let mime = (q.msg || q).mimetype || '';
 
+        let content;
         if (/image/.test(mime)) {
-            let img = await q.download();
-            await client.sendMessage(jid, { image: img, caption: body }, { statusJidList: [] });
+            content = { image: await q.download(), caption: body };
         } else if (/video/.test(mime)) {
-            let vid = await q.download();
-            await client.sendMessage(jid, { video: vid, caption: body }, { statusJidList: [] });
+            content = { video: await q.download(), caption: body };
         } else if (body) {
-            // font: 0-6, backgroundColor sirf text status ke liye
-            await client.sendMessage(jid, {
-                text: body,
-                backgroundColor: '#0b141a',
-                font: 3
-            }, { statusJidList: [] });
+            content = { text: body, backgroundColor: '#0b141a', font: 3 };
         } else {
-            return await client.sendMessage(from, { text: "*🍁 Status ka text ya photo/video do!*" }, { quoted: message });
+            return await client.sendMessage(from, { text: "*Send a text, image or video for the status.*" }, { quoted: message });
         }
 
-        await client.sendMessage(from, { text: "*✅ Channel pe status laga diya! (24 ghante baad khud hat jayega)*" }, { quoted: message });
+        // --- Try 1: newsletter status options ---
+        let res = await client.sendMessage(jid, content, {
+            statusJidList: [],
+            ephemeralExpiration: 86400 // 24h expiry hint (status lifetime)
+        });
+
+        console.log("channelstatus DEBUG - sent result:");
+        console.log(JSON.stringify(res, null, 2));
+
+        await client.sendMessage(from, { text:
+            "*Status request sent.* Check the channel:\n" +
+            "- If it appears as a status (24h) = working\n" +
+            "- If it appears as a normal post = your Baileys build does not support channel status\n\n" +
+            "Check the console/terminal for the DEBUG result and share it."
+        }, { quoted: message });
     } catch (error) {
         console.error("channelstatus Error:", error);
-        await client.sendMessage(from, { text: "❌ Error:\n" + error.message }, { quoted: message });
+        await client.sendMessage(from, { text: "*Error:*\n" + error.message }, { quoted: message });
     }
 });
