@@ -9,6 +9,9 @@
 // forwarding the video. Now media is detected directly from Baileys
 // contextInfo.quotedMessage (framework-independent), sends are verified,
 // and text posts are cleaned (command/link removed).
+// FIX 2: for channels (@newsletter) the PRIMARY path is download + re-upload —
+// forwarding can return a key but the video never renders. Video retries:
+// mp4 -> no caption -> as document. Raw forward is last-resort only.
 import { fileURLToPath } from 'url';
 import { cmd } from '../command.js';
 
@@ -141,18 +144,10 @@ cmd({
         if (media) {
             const caption = q.caption || m.quoted?.caption || cleanText(text) || '';
 
-            // METHOD 1: Forward the RAW original message (any size, no re-encode)
-            const raw = getRawMessage(q);
-            if (raw) {
-                try {
-                    await verifiedSend(client, jid, { forward: raw });
-                    return await client.sendMessage(from, { text: "✅ Sent successfully" }, { quoted: message });
-                } catch (e) {
-                    console.error("cstatus forward failed:", e.message);
-                }
-            }
-
-            // METHOD 2: Download & re-upload with the correct type
+            // METHOD 1 (PRIMARY for channels): Download & re-upload.
+            // Forwarding to @newsletter is unreliable in Baileys: it can return a
+            // key (fake success) but the video never renders in the channel.
+            // Every working channel-sender in modded Baileys bots re-uploads.
             try {
                 const buffer = await downloadMedia(client, q, ctxQuote);
                 if (!buffer) throw new Error('could not download media');
@@ -161,8 +156,23 @@ cmd({
                     await verifiedSend(client, jid, { image: buffer, caption });
                 } else if (/webp/.test(media.mime) || /sticker/.test(media.mime)) {
                     await verifiedSend(client, jid, { sticker: buffer });
-                } else if (/^video\//.test(media.mime)) {
-                    await verifiedSend(client, jid, { video: buffer, caption, mimetype: media.mime });
+                } else if (/^video\//.test(media.mime) || /quicktime|mkv|avi|webm/.test(media.mime)) {
+                    // Video retries: normal -> forced mp4 (no caption) -> document
+                    try {
+                        await verifiedSend(client, jid, { video: buffer, caption, mimetype: 'video/mp4' });
+                    } catch (v1) {
+                        console.error("cstatus video attempt 1 failed:", v1.message);
+                        try {
+                            await verifiedSend(client, jid, { video: buffer, mimetype: 'video/mp4' });
+                        } catch (v2) {
+                            console.error("cstatus video attempt 2 failed:", v2.message);
+                            await verifiedSend(client, jid, {
+                                document: buffer,
+                                mimetype: 'video/mp4',
+                                fileName: `video-${Date.now()}.mp4`
+                            });
+                        }
+                    }
                 } else if (/^audio\//.test(media.mime) || /ogg|opus/.test(media.mime)) {
                     await verifiedSend(client, jid, media.ptt
                         ? { audio: buffer, ptt: true, mimetype: 'audio/ogg; codecs=opus' }
@@ -177,6 +187,18 @@ cmd({
                 return await client.sendMessage(from, { text: "✅ Sent successfully" }, { quoted: message });
             } catch (e) {
                 console.error("cstatus re-upload failed:", e.message);
+            }
+
+            // METHOD 2 (fallback only): forward the RAW original message.
+            // Kept as last resort for huge files that fail to download.
+            const raw = getRawMessage(q);
+            if (raw) {
+                try {
+                    await verifiedSend(client, jid, { forward: raw });
+                    return await client.sendMessage(from, { text: "✅ Sent successfully" }, { quoted: message });
+                } catch (e) {
+                    console.error("cstatus forward failed:", e.message);
+                }
             }
 
             return await client.sendMessage(from, { text:
