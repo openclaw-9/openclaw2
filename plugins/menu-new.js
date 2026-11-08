@@ -40,7 +40,7 @@ const formatCategory = (category, cmds) => {
 
 cmd({
     pattern: "menu",
-    alias: ["mm", "help", "allmenu","fullmenu"],
+    alias: ["m", "help", "allmenu","fullmenu"],
     use: '.menu',
     desc: "Show all bot commands",
     category: "main",
