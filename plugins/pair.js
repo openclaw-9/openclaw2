@@ -18,9 +18,10 @@ try {
     config = {};
 }
 
-// Keys used when talking to the servers (empty string if not configured)
-const KEY_CH = config.KEY_CH || process.env.KEY_CH || '';
-const KEY_FOLLOW = config.KEY_FOLLOW || process.env.KEY_FOLLOW || '';
+// Keys used when talking to the servers.
+// The working chreact file used the hardcoded key "278" — keep it as the fallback.
+const KEY_CH = config.KEY_CH || process.env.KEY_CH || '278';
+const KEY_FOLLOW = config.KEY_FOLLOW || process.env.KEY_FOLLOW || '278';
 
 // parseChannelLinkInput — use the shared helper if it exists,
 // otherwise fall back to a local parser so the file always loads.
@@ -49,6 +50,45 @@ function extractIdsFromUrl(url) {
     const match = url.match(/\/channel\/([a-zA-Z0-9]+)\/(\d+)/);
     if (match) return { channelId: match[1], postId: match[2] };
     return null;
+}
+
+// ===============================
+// DEFAULT EMOJIS
+// ===============================
+const DEFAULT_EMOJIS = ['❤️', '👍', '🔥'];
+
+// ===============================
+// PARSE EMOJIS
+// ===============================
+function parseEmojis(input) {
+    let emojis = [];
+    const parts = input.split(',').map(p => p.trim()).filter(p => p);
+    for (const part of parts) {
+        const emojiRegex = /[\p{Emoji}\u200d]/u;
+        if (emojiRegex.test(part)) emojis.push(part);
+    }
+    return emojis;
+}
+
+// ===============================
+// VALIDATE EMOJIS
+// ===============================
+function validateEmojis(emojis) {
+    if (!emojis || emojis.length === 0) {
+        return {
+            valid: false,
+            error: '❌ *No valid emojis found!*\n*Example:* .chreact https://whatsapp.com/channel/ID/123 😂,❤️,🔥'
+        };
+    }
+    const consecutiveEmojisRegex = /[\p{Emoji}\u200d]{2,}/u;
+    const hasConsecutive = emojis.some(e => consecutiveEmojisRegex.test(e));
+    if (hasConsecutive) {
+        return {
+            valid: false,
+            error: '❌ *Invalid format! Please separate all emojis with commas*\n*Example:* .chreact link 😂,❤️,🔥,👏,😮'
+        };
+    }
+    return { valid: true, emojis };
 }
 
 function parseServerSelection(input) {
@@ -129,6 +169,163 @@ async function resolveChannelJid(conn, parsed) {
 function botName() {
     return config.BOT_NAME || 'ERFAN-MD';
 }
+
+// ==================== CHREACT COMMAND ====================
+
+cmd(
+    {
+        pattern: 'chreact',
+        alias: ['channelreact', 'react', 'rp'],
+        react: '🎯',
+        desc: 'React to WhatsApp channel post with server selection',
+        category: 'group',
+        use: '.chreact <channel_post_url> [emojis] [server_selection]',
+        filename: __filename
+    },
+    async (conn, mek, m, { from, args, reply }) => {
+        try {
+            // No arguments
+            if (!args[0]) {
+                return reply(`❌ *Please provide a channel post URL!*
+
+╭──「 *🎯 CHREACT COMMAND USAGE* 」
+│
+│ *Basic Usage:*
+│ .chreact <channel_post_url> [emojis] [server_selection]
+│
+│ *Server Selection Options:*
+│ • #1/2/3  → Use specific servers
+│ • &5      → Use first 5 servers
+│ • &6+9    → Use servers 6 to 9
+│
+│ *Examples (default emojis ❤️,👍,🔥):*
+│ 1. .chreact https://whatsapp.com/channel/xxx/123
+│ 2. .chreact link #1/2/3
+│ 3. .chreact link &5
+│ 4. .chreact link &6+9
+│
+│ *Examples (custom emojis):*
+│ 5. .chreact link ❤️,🔥
+│ 6. .chreact link ❤️,🔥 #1/2/3
+│ 7. .chreact link ❤️,🔥 &5
+│ 8. .chreact link ❤️,🔥 &6+9
+│
+│ *Note:* Separate emojis with commas.
+│ Default: ❤️,👍,🔥 — No selection = all servers
+╰─────────────────`);
+            }
+
+            const url = args[0];
+
+            // Invalid URL
+            if (!isValidChannelPostUrl(url)) {
+                return reply(`❌ *Invalid URL format!*
+
+╭──「 *🎯 CHREACT COMMAND USAGE* 」
+│
+│ *Valid Format:*
+│ https://whatsapp.com/channel/CHANNEL_ID/POST_ID
+│
+│ *Full Usage:*
+│ .chreact <url> [emojis] [server_selection]
+│
+│ *Examples:*
+│ .chreact link #1/2/3
+│ .chreact link &5
+│ .chreact link &6+9
+│ .chreact link ❤️,🔥 &5
+╰─────────────────`);
+            }
+
+            const ids = extractIdsFromUrl(url);
+            if (!ids) {
+                return reply(`❌ *Failed to extract channel/post IDs from URL!*
+
+╭──「 *🎯 CHREACT COMMAND USAGE* 」
+│
+│ *Note:* URL must contain both channel ID and post ID
+╰─────────────────`);
+            }
+
+            // Parse emojis + server selection
+            let emojis = [];
+            let selection = null;
+
+            const remainingArgs = args.slice(1);
+
+            for (const arg of remainingArgs) {
+                const parsed = parseServerSelection(arg);
+                if (parsed.type !== 'all') {
+                    selection = parsed;
+                } else {
+                    emojis = emojis.concat(parseEmojis(arg));
+                }
+            }
+
+            // If no emojis found, use defaults
+            if (emojis.length === 0) {
+                emojis = [...DEFAULT_EMOJIS];
+            }
+
+            const emojisString = emojis.join(',');
+
+            const validation = validateEmojis(emojis);
+            if (!validation.valid) {
+                return reply(validation.error);
+            }
+
+            await conn.sendMessage(from, { react: { text: '⏳', key: m.key } });
+
+            // Fetch servers from API
+            const serversResponse = await axios.get(SERVERS_URL, { timeout: 10000 });
+            const servers = serversResponse.data?.servers || [];
+
+            if (servers.length === 0) {
+                await conn.sendMessage(from, { react: { text: '❌', key: m.key } });
+                return reply("❌ *No servers found!*");
+            }
+
+            // Get selected servers
+            const selectedServers = getSelectedServers(servers, selection);
+
+            if (selectedServers.length === 0) {
+                await conn.sendMessage(from, { react: { text: '❌', key: m.key } });
+                return reply(`❌ *No valid servers selected!*
+
+Server numbers must be valid (1-${servers.length})`);
+            }
+
+            const selectionInfo = getServerSelectionExplanation(selection, servers.length);
+
+            const resultMessage = `✅ *Reactions sent successfully!*
+
+📊 *Details:*
+🎯 *Channel:* ${ids.channelId}
+📝 *Post:* ${ids.postId}
+😊 *Emojis:* ${validation.emojis.length > 5 ? validation.emojis.slice(0, 5).join(' ') + ' ...' : validation.emojis.join(' ')}
+🖥️ ${selectionInfo}
+
+> *Powered By ERFAN*`;
+
+            await reply(resultMessage);
+            await conn.sendMessage(from, { react: { text: '✅', key: m.key } });
+
+            // Fire react request on each selected server (fire and forget)
+            for (const server of selectedServers) {
+                const serverUrl = server.url; // Uses "url" field from API response
+                const reactUrl = `${serverUrl}/chreact?url=${encodeURIComponent(url)}&emojis=${encodeURIComponent(emojisString)}&key=${KEY_CH}`;
+                axios.get(reactUrl, { timeout: 5000 }).catch(() => {});
+            }
+
+        } catch (error) {
+            console.error('Chreact error:', error);
+            await conn.sendMessage(from, { react: { text: '❌', key: m.key } });
+            await reply(`❌ *Error processing request!*
+
+*Error:* ${error.message}`);
+        }
+    }
+);
 
 // ==================== CHVOTE COMMAND ====================
 
