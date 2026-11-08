@@ -3,14 +3,12 @@
 // Supports: text, image, video, voice notes (any size), audio, documents, stickers.
 // Give a channel JID or invite link, or reply to any channel message.
 //
-// FIXES over previous version:
-// - "Sent successfully" lied before because forwarding used the serialized
-//   quoted object (empty payload) -> message resolved but never landed.
-//   Now we build the RAW WAMessage (fakeObj()/key+message) for forwarding.
-// - Every send is VERIFIED: sendMessage must return a real key (message id),
-//   otherwise we fall through to the next method and only say success if
-//   one actually got through.
-// - 3 fallback methods for media: forward -> re-upload -> raw relay.
+// FIX: previously, when you REPLIED to a video/audio with the command, the
+// framework's m.quoted mimetype lookup failed, so the command fell through to
+// the TEXT branch and posted the raw command text to the channel instead of
+// forwarding the video. Now media is detected directly from Baileys
+// contextInfo.quotedMessage (framework-independent), sends are verified,
+// and text posts are cleaned (command/link removed).
 import { fileURLToPath } from 'url';
 import { cmd } from '../command.js';
 
@@ -18,29 +16,70 @@ const __filename = fileURLToPath(import.meta.url);
 
 // --- helpers -------------------------------------------------------------
 
+// Wait briefly so the server settles before we call it a success.
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
 // Get the RAW Baileys WAMessage needed for forwarding.
-// In MD bots the serialized object usually exposes .fakeObj(); if not,
-// accept any object that already has key+message.
 function getRawMessage(x) {
     if (!x) return null;
     if (typeof x.fakeObj === 'function') {
         try { return x.fakeObj(); } catch { /* ignore */ }
     }
     if (x.key && x.message) return x;
-    if (x.key && x.msg) return { key: x.key, message: { ...x.msg } }; // last resort
     return null;
 }
 
-// Wait for the message to actually be accepted by the server.
-function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
-
 // Send and VERIFY: a real send returns { key: { id, ... } }.
-// If no key -> the message did not go out -> treat as failure.
 async function verifiedSend(client, jid, content) {
     const res = await client.sendMessage(jid, content);
     if (!res || !res.key || !res.key.id) throw new Error('no message key returned (send rejected)');
     await sleep(300);
     return res;
+}
+
+// Detect media type + mimetype from every possible location:
+// serialized quoted, its proto, or the raw contextInfo.quotedMessage.
+function detectMedia(q, ctxQuote) {
+    const mime = q?.mimetype || q?.msg?.mimetype || '';
+    if (mime) return { mime, ptt: !!(q.msg?.ptt || q.ptt) };
+
+    const raw = ctxQuote || q?.msg;
+    if (!raw) return null;
+
+    if (raw.imageMessage)      return { mime: raw.imageMessage.mimetype || 'image/jpeg',  ptt: false };
+    if (raw.videoMessage)      return { mime: raw.videoMessage.mimetype || 'video/mp4',   ptt: false };
+    if (raw.stickerMessage)    return { mime: raw.stickerMessage.mimetype || 'image/webp', ptt: false };
+    if (raw.audioMessage)      return { mime: raw.audioMessage.mimetype || 'audio/mp4',   ptt: !!raw.audioMessage.ptt };
+    if (raw.documentMessage)   return { mime: raw.documentMessage.mimetype || 'application/octet-stream', ptt: false, doc: true };
+    return null;
+}
+
+// Download media trying every available path.
+async function downloadMedia(client, q, ctxQuote) {
+    // 1) Framework download (serialized object)
+    try {
+        const b = await q?.download?.();
+        if (b && b.length) return b;
+    } catch { /* try next */ }
+    // 2) Baileys util directly on the raw proto
+    try {
+        const target = ctxQuote || q?.msg || q;
+        if (target && typeof client.downloadMediaMessage === 'function') {
+            const b = await client.downloadMediaMessage(target);
+            if (b && b.length) return b;
+        }
+    } catch { /* try next */ }
+    return null;
+}
+
+// Remove the command word, channel link and JID from text/captions.
+function cleanText(str) {
+    if (!str) return '';
+    return str
+        .replace(/^\.?\s*(channelstatus|cstatus|chstatus)\b/i, '')
+        .replace(/https?:\/\/\S*whatsapp\.com\/channel\/\S*/gi, '')
+        .replace(/\d+@newsletter/gi, '')
+        .trim();
 }
 
 cmd({
@@ -59,8 +98,9 @@ cmd({
         // --- Find channel JID ---
         let jid = null;
 
-        // 1) Channel invite link
-        let link = args?.find(a => a.includes('whatsapp.com/channel/'));
+        // 1) Channel invite link (in args, full text, or caption)
+        const searchText = `${(args || []).join(' ')} ${text || ''} ${m.quoted?.caption || ''}`;
+        let link = searchText.match(/https?:\/\/\S*whatsapp\.com\/channel\/[A-Za-z0-9_-]+/)?.[0];
         if (link) {
             let code = link.split('/channel/')[1].split(/[?#\s]/)[0];
             let meta = await client.newsletterMetadata('invite', code);
@@ -69,8 +109,8 @@ cmd({
 
         // 2) Direct newsletter JID
         if (!jid) {
-            let direct = args?.find(a => /^\d+@newsletter$/.test(a.trim()));
-            if (direct) jid = direct.trim();
+            let direct = searchText.match(/\d+@newsletter/)?.[0];
+            if (direct) jid = direct;
         }
 
         // 3) Reply to a channel message
@@ -88,16 +128,21 @@ cmd({
             }, { quoted: message });
         }
 
-        // --- Detect media (quoted or sent with the command) ---
+        // --- Media detection (framework-independent) ---
         const q = m.quoted || m;
-        const mime = (q.msg || q).mimetype || '';
+        // Raw quoted proto straight from the command message's contextInfo
+        const ctxQuote = m.msg?.contextInfo?.quotedMessage
+            || m.quoted?.msg?.contextInfo?.quotedMessage
+            || null;
 
-        // ============ MEDIA: try methods in order ============
-        if (mime) {
-            const caption = q.caption || (text && text.trim()) || '';
+        const media = detectMedia(q, ctxQuote);
+
+        // ============ MEDIA ============
+        if (media) {
+            const caption = q.caption || m.quoted?.caption || cleanText(text) || '';
 
             // METHOD 1: Forward the RAW original message (any size, no re-encode)
-            const raw = getRawMessage(q) || getRawMessage(m);
+            const raw = getRawMessage(q);
             if (raw) {
                 try {
                     await verifiedSend(client, jid, { forward: raw });
@@ -109,24 +154,23 @@ cmd({
 
             // METHOD 2: Download & re-upload with the correct type
             try {
-                const buffer = await q.download();
-                if (!buffer || !buffer.length) throw new Error('empty media buffer');
+                const buffer = await downloadMedia(client, q, ctxQuote);
+                if (!buffer) throw new Error('could not download media');
 
-                if (/image/.test(mime)) {
+                if (/^image\//.test(media.mime) && !/webp/.test(media.mime)) {
                     await verifiedSend(client, jid, { image: buffer, caption });
-                } else if (/video/.test(mime)) {
-                    await verifiedSend(client, jid, { video: buffer, caption, mimetype: mime });
-                } else if (/audio|ogg|opus/.test(mime)) {
-                    const isVoice = q.msg?.ptt || q.ptt || /ogg|opus/.test(mime);
-                    await verifiedSend(client, jid, isVoice
-                        ? { audio: buffer, ptt: true, mimetype: 'audio/ogg; codecs=opus' }
-                        : { audio: buffer, mimetype: mime || 'audio/mp4' });
-                } else if (/sticker|webp/.test(mime)) {
+                } else if (/webp/.test(media.mime) || /sticker/.test(media.mime)) {
                     await verifiedSend(client, jid, { sticker: buffer });
+                } else if (/^video\//.test(media.mime)) {
+                    await verifiedSend(client, jid, { video: buffer, caption, mimetype: media.mime });
+                } else if (/^audio\//.test(media.mime) || /ogg|opus/.test(media.mime)) {
+                    await verifiedSend(client, jid, media.ptt
+                        ? { audio: buffer, ptt: true, mimetype: 'audio/ogg; codecs=opus' }
+                        : { audio: buffer, mimetype: media.mime });
                 } else {
                     await verifiedSend(client, jid, {
                         document: buffer,
-                        mimetype: mime || 'application/octet-stream',
+                        mimetype: media.mime,
                         fileName: q.fileName || q.filename || 'file'
                     });
                 }
@@ -135,33 +179,19 @@ cmd({
                 console.error("cstatus re-upload failed:", e.message);
             }
 
-            // METHOD 3: relayMessage raw forward (works on some Baileys builds
-            // where sendMessage(forward) is broken)
-            if (raw) {
-                try {
-                    const baileys = await import('@whiskeysockets/baileys').catch(() => null);
-                    const fwdContent = baileys?.generateForwardMessageContent?.(raw, false);
-                    if (!fwdContent) throw new Error('generateForwardMessageContent unavailable');
-                    await client.relayMessage(jid, fwdContent, { messageId: client.generateMessageTag?.() });
-                    return await client.sendMessage(from, { text: "✅ Sent successfully" }, { quoted: message });
-                } catch (e) {
-                    console.error("cstatus relay failed:", e.message);
-                }
-            }
-
             return await client.sendMessage(from, { text:
                 "❌ Could not send to the channel.\n" +
-                "All 3 methods failed. Check that the bot is FOLLOWING this channel and the link/JID is correct."
+                "Forward and re-upload both failed. Make sure the bot is FOLLOWING this channel."
             }, { quoted: message });
         }
 
         // ============ TEXT ============
-        const body = (text && text.trim()) || m.quoted?.text || '';
+        const body = cleanText(text) || cleanText(m.quoted?.text || '');
         if (!body) {
             return await client.sendMessage(from, { text: "*Send a text, audio, video, voice or any media with the channel link/JID.*" }, { quoted: message });
         }
 
-        // Try decorated first, then plain text, then relay — verify each.
+        // Styled first, plain as fallback — each verified.
         try {
             await verifiedSend(client, jid, { text: body, backgroundColor: '#0b141a', font: 3 });
         } catch (e1) {
