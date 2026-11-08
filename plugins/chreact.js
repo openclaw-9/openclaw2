@@ -447,217 +447,46 @@ Server numbers must be valid (1-${servers.length})`);
 cmd({
     pattern: "chreactin",
     alias: ["chreactauto", "channelreactin"],
-    react: "🔁",
-    desc: "Auto react on every new post of a followed WhatsApp channel",
+    react: "⚠️",
+    desc: "Auto react on every new post of a followed WhatsApp channel (NOT ACTIVE IN THIS BOT)",
     category: "group",
     use: ".chreactin on|off|list <channel_link> [emojis]",
     filename: __filename
-}, async (conn, mek, m, { from, args, reply }) => {
+}, async (conn, mek, m, { from, reply }) => {
     try {
-        const sub = (args[0] || '').toLowerCase();
-        const rest = args.slice(1);
+        await conn.sendMessage(from, { react: { text: '⚠️', key: m.key } });
 
-        const usage = `╭──「 *🔁 CHREACTIN COMMAND* 」
+        return reply(`╭──「 *🔁 CHREACTIN — NOT ACTIVE* 」
 │
-│ *Commands:*
-│ • .chreactin on <channel_link> [emojis]
-│ • .chreactin off <channel_link>
-│ • .chreactin list
+│ *⚠️ NOTICE*
 │
-│ *Link format:*
-│ https://whatsapp.com/channel/CHANNEL_ID
+│ *This command is NOT ACTIVE
+│ in this bot.*
 │
-│ *Limit:* 1 bot = 1 channel
+│ *CHREACTIN has been TEMPORARILY
+│ turned OFF here — \`.chreactin on\`,
+│ \`.off\` and \`.list\` are disabled.*
 │
-│ *Default REACT:* random from full emoji list
-│ (custom emojis optional)
+│ *No channel will be followed and
+│ no auto react will be saved.*
 │
-│ *Examples:*
-│ 1. .chreactin on https://whatsapp.com/channel/xxx
-│ 2. .chreactin on https://whatsapp.com/channel/xxx ❤️,🔥
-│ 3. .chreactin off https://whatsapp.com/channel/xxx
-│ 4. .chreactin list
-╰─────────────────`;
+│ *Want channel auto react?*
+│ *👉 Go install / deploy the other
+│ bot — CHREACTIN works there:*
+│
+╰─────────────────
 
-        if (!sub || !['on', 'off', 'list'].includes(sub)) {
-            return reply(usage);
-        }
-
-        await conn.sendMessage(from, { react: { text: '⏳', key: m.key } });
-
-        const botNumber = getBotNumber(conn);
-        if (!botNumber) {
-            await conn.sendMessage(from, { react: { text: '❌', key: m.key } });
-            return reply(`❌ *Bot session not found!*`);
-        }
-
-        if (sub === 'list') {
-            const docs = await listChreactinChannels();
-            if (!docs.length) {
-                await conn.sendMessage(from, { react: { text: '✅', key: m.key } });
-                return reply(`📋 *CHREACTIN LIST*
-
-No channel is set for auto react yet.
-
-*Use:* .chreactin on <channel link>`);
-            }
-            let text = `📋 *CHREACTIN LIST*
-
-*╭────⬡ ${config.BOT_NAME} ⬡────*
-`;
-            docs.forEach((doc, i) => {
-                const mine = doc.enabledNumber === botNumber ? ' *(yours)*' : '';
-                const emojiShow = (doc.emojis || []).length
-                    ? doc.emojis.slice(0, 4).join(' ') + (doc.emojis.length > 4 ? ' ...' : '')
-                    : 'default';
-                text += `*├▢ ${i + 1}. ${doc.channelJid}${mine}*\n*├▢    REACT :* ${emojiShow}\n`;
-            });
-            text += `*╰▢ TOTAL :* ${docs.length} channels\n*╰────────────────⬡*`;
-            await conn.sendMessage(from, { react: { text: '✅', key: m.key } });
-            return reply(text);
-        }
-
-        const target = rest.join(' ').trim();
-        if (!target) {
-            await conn.sendMessage(from, { react: { text: '❌', key: m.key } });
-            return reply(`❌ *Please provide a channel link!*\n\n${usage}`);
-        }
-
-        // Emojis can also be given with the link (comma separated)
-        const parts = target.split(/\s+/);
-        const link = parts[0];
-        const customEmojis = parts.length > 1
-            ? parts.slice(1).join(' ').split(',').map(e => e.trim()).filter(e => e)
-            : [];
-
-        const parsed = parseChannelLinkInput(link);
-        if (!parsed) {
-            await conn.sendMessage(from, { react: { text: '❌', key: m.key } });
-            return reply(`❌ *Invalid channel link!*
-
-*Valid format:*
-https://whatsapp.com/channel/CHANNEL_ID`);
-        }
-
-        if (sub === 'on') {
-            const channelJid = await resolveChannelJid(conn, parsed);
-            if (!channelJid) {
-                await conn.sendMessage(from, { react: { text: '❌', key: m.key } });
-                return reply(`❌ *Could not fetch channel info!*
-
-*Error:* Channel not found or link is wrong.
-Make sure the channel is public.`);
-            }
-
-            // LIMIT CHECK — one bot number = one channel
-            const existing = await findChreactinByNumber(botNumber);
-            if (existing && existing.channelJid !== channelJid) {
-                await conn.sendMessage(from, { react: { text: '❌', key: m.key } });
-                return reply(`💛 *You already have a channel set!*
-
-Your bot can have auto react on only *ONE* channel.
-
-*╭────⬡ ${config.BOT_NAME} ⬡────*
-*├▢ YOUR CHANNEL :* ${existing.channelJid}
-*╰────────────────⬡*
-
-*Want to change it? Easy:*
-1️⃣ First remove the old one:
-.chreactin off https://whatsapp.com/channel/${existing.channelId || existing.channelJid.split('@')[0]}
-
-2️⃣ Then add your new channel:
-.chreactin on <new channel link>`);
-            }
-
-            // Only THIS bot follows the channel
-            try {
-                await conn.newsletterFollow(channelJid);
-            } catch (e) {
-                if (!(e.message?.includes('already') || e.message?.includes('409'))) {
-                    await conn.sendMessage(from, { react: { text: '❌', key: m.key } });
-                    return reply(`❌ *Follow failed!* ${e.message}`);
-                }
-            }
-
-            // Emojis to save: custom emojis if given, otherwise the full DEFAULT_EMOJIS list
-            const emojisToSave = customEmojis.length ? customEmojis : [...DEFAULT_EMOJIS];
-
-            // Local save (with bot number for the limit)
-            await saveChreactinChannel({ channelJid, channelId: parsed.channelId, emojis: emojisToSave, enabledBy: 'command', enabledNumber: botNumber });
-
-            // Save request to all servers (parallel)
-            let okServers = 0, totalServers = 0;
-            try {
-                const out = await fanOutChreactinSave(channelJid, parsed.channelId, emojisToSave, botNumber);
-                okServers = out.okServers;
-                totalServers = out.totalServers;
-            } catch (e) {
-                totalServers = 0;
-            }
-
-            const emojiShow = emojisToSave.slice(0, 5).join(' ') + (emojisToSave.length > 5 ? ' ...' : '');
-            await conn.sendMessage(from, { react: { text: '✅', key: m.key } });
-            return reply(`✅ *CHREACTIN ON*
-
-*╭────⬡ ${config.BOT_NAME} ⬡────*
-*├▢ CHANNEL :* ${channelJid}
-*├▢ REACT :* ${emojiShow}
-*├▢ SERVERS :* ${okServers}/${totalServers} saved
-*├▢ STATUS :* Every new post will get
-*├▢          auto reacts on all servers
-*╰────────────────⬡*
+🌐 *Deploy the channel-react bot here:*
+*https://darkzonemd.vercel.app*
 
 > *Powered By ꨄ ERFAN-MD ꨄ*`);
-        }
-
-        if (sub === 'off') {
-            const channelJid = await resolveChannelJid(conn, parsed);
-            if (!channelJid) {
-                // Look in stored docs
-                const docs = await listChreactinChannels();
-                const found = docs.find(d => d.channelId === parsed.channelId);
-                if (found) channelJid = found.channelJid;
-            }
-            if (!channelJid) {
-                await conn.sendMessage(from, { react: { text: '❌', key: m.key } });
-                return reply(`❌ *CHREACTIN is not ON for this channel!*`);
-            }
-
-            // Unfollow (only own bot)
-            try { await conn.newsletterUnfollow(channelJid); } catch (e) {}
-
-            // Local remove
-            await removeChreactinChannel(channelJid);
-
-            // Remove request to all servers
-            let okServers = 0, totalServers = 0;
-            try {
-                const out = await fanOutChreactinRemove(channelJid);
-                okServers = out.okServers;
-                totalServers = out.totalServers;
-            } catch (e) {}
-
-            await conn.sendMessage(from, { react: { text: '✅', key: m.key } });
-            return reply(`✅ *CHREACTIN OFF*
-
-*╭────⬡ ${config.BOT_NAME} ⬡────*
-*├▢ CHANNEL :* ${channelJid}
-*├▢ SERVERS :* ${okServers}/${totalServers} removed
-*├▢ STATUS :* No more auto reacts on this channel
-*╰────────────────⬡*
-
-> *Powered By ꨄ ERFAN-MD ꨄ*`);
-        }
-
     } catch (error) {
         console.error("Chreactin error:", error);
-        await conn.sendMessage(from, { react: { text: '❌', key: m.key } });
         return reply(`❌ *Error processing request!*
 
 *Error:* ${error.message}`);
     }
 });
-
 // #####################################################################
 //                         UNFOLLOW COMMAND
 // #####################################################################
