@@ -1,8 +1,19 @@
+
+
+
 import { fileURLToPath } from 'url';
 import { cmd } from '../command.js';
 import axios from 'axios';
 import config from '../config.js';
-import { parseChannelLinkInput } from '../lib/only.js';
+import {
+    parseChannelLinkInput,
+    saveChreactinChannel,
+    removeChreactinChannel,
+    listChreactinChannels,
+    findChreactinByNumber,
+    fanOutChreactinSave,
+    fanOutChreactinRemove,
+} from '../lib/only.js';
 import { API_BASE_URL, SERVERS_URL, KEY_CH, KEY_FOLLOW } from '../lib/erfan.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -10,6 +21,22 @@ const __filename = fileURLToPath(import.meta.url);
 // ===============================
 // SHARED HELPERS
 // ===============================
+// DEFAULT REACT EMOJIS — used by .chreact (no emojis given)
+// and saved as the CHREACTIN default when user gives no emojis
+const DEFAULT_EMOJIS = ['❤️', '👍', '😮', '😎', '💀',
+                    '🔥', '✨', '💖', '🤍', '🥀',
+                    '💫', '🌸', '⚡', '🤝', '🎉',
+                    '🥺', '😍', '😈', '🤖', '👀',
+                    '💯', '🎶', '🖤', '💥', '🌟',
+                    '😴', '🫶', '🍂', '☠️', '🌈',
+                    '🦋', '💎', '🎧', '📸', '🚀',
+                    '😏', '🤩', '🌹', '🎭', '🕊️',
+                    '🐼', '🐣', '🌙', '☁️', '🍁',
+                    '🎀', '🧸', '🍓', '🍒', '🌼',
+                    '🎯', '🏆', '🪐', '🌊', '🐉',
+                    '😜', '🤍', '💌', '📍', '🎵',
+                    '🕶️', '🪄', '💋', '🌺', '🍀'];
+
 function isValidChannelPostUrl(url) {
     const pattern = /^https?:\/\/(?:www\.)?whatsapp\.com\/channel\/[a-zA-Z0-9]+\/\d+$/;
     return pattern.test(url);
@@ -19,6 +46,34 @@ function extractIdsFromUrl(url) {
     const match = url.match(/\/channel\/([a-zA-Z0-9]+)\/(\d+)/);
     if (match) return { channelId: match[1], postId: match[2] };
     return null;
+}
+
+function parseEmojis(input) {
+    let emojis = [];
+    const parts = input.split(',').map(p => p.trim()).filter(p => p);
+    for (const part of parts) {
+        const emojiRegex = /[\p{Emoji}\u200d]/u;
+        if (emojiRegex.test(part)) emojis.push(part);
+    }
+    return emojis;
+}
+
+function validateEmojis(emojis) {
+    if (!emojis || emojis.length === 0) {
+        return {
+            valid: false,
+            error: '❌ *No valid emojis found!*\n*Example:* .chreact https://whatsapp.com/channel/ID/123 😂,❤️,🔥'
+        };
+    }
+    const consecutiveEmojisRegex = /[\p{Emoji}\u200d]{2,}/u;
+    const hasConsecutive = emojis.some(e => consecutiveEmojisRegex.test(e));
+    if (hasConsecutive) {
+        return {
+            valid: false,
+            error: '❌ *Invalid format! Please separate all emojis with commas*\n*Example:* .chreact link 😂,❤️,🔥,👏,😮'
+        };
+    }
+    return { valid: true, emojis };
 }
 
 function parseServerSelection(input) {
@@ -86,6 +141,11 @@ function isOwnerUser(senderRaw) {
         || sudoList.includes(senderNum);
 }
 
+// Bot number of the session running this command
+function getBotNumber(conn) {
+    return conn?.user?.id ? String(conn.user.id).split(':')[0].replace(/[^0-9]/g, '') : null;
+}
+
 // Get channel JID from a channel link (metadata → jid)
 async function resolveChannelJid(conn, parsed) {
     if (parsed.jid) return parsed.jid;
@@ -95,6 +155,146 @@ async function resolveChannelJid(conn, parsed) {
     } catch (e) {}
     return null;
 }
+
+// #####################################################################
+//                          CHREACT COMMAND
+// #####################################################################
+cmd({
+    pattern: "chreact",
+    alias: ["channelreact", "react", "rp"],
+    react: "🎯",
+    desc: "React to WhatsApp channel post with server selection",
+    category: "group",
+    use: ".chreact <channel_post_url> [emojis] [server_selection]",
+    filename: __filename
+}, async (conn, mek, m, { from, args, reply }) => {
+    try {
+        if (!args[0]) {
+            return reply(`❌ *Please provide a channel post URL!*
+
+╭──「 *🎯 CHREACT COMMAND USAGE* 」
+│
+│ *Basic Usage:*
+│ .chreact <channel_post_url> [emojis] [server_selection]
+│
+│ *Server Selection Options:*
+│ • #1/2/3  → Use specific servers
+│ • &5      → Use first 5 servers
+│ • &6+9    → Use servers 6 to 9
+│
+│ *Examples (default emojis = full emoji list):*
+│ 1. .chreact https://whatsapp.com/channel/xxx/123
+│ 2. .chreact link #1/2/3
+│ 3. .chreact link &5
+│ 4. .chreact link &6+9
+│
+│ *Examples (custom emojis):*
+│ 5. .chreact link ❤️,🔥
+│ 6. .chreact link ❤️,🔥 #1/2/3
+│ 7. .chreact link ❤️,🔥 &5
+│ 8. .chreact link ❤️,🔥 &6+9
+│
+│ *Note:* Separate emojis with commas.
+│ Default: random from full emoji list — No selection = all servers
+╰─────────────────`);
+        }
+
+        const url = args[0];
+
+        if (!isValidChannelPostUrl(url)) {
+            return reply(`❌ *Invalid URL format!*
+
+╭──「 *🎯 CHREACT COMMAND USAGE* 」
+│
+│ *Valid Format:*
+│ https://whatsapp.com/channel/CHANNEL_ID/POST_ID
+│
+│ *Full Usage:*
+│ .chreact <url> [emojis] [server_selection]
+│
+│ *Examples:*
+│ .chreact link #1/2/3
+│ .chreact link &5
+│ .chreact link ❤️,🔥 &5
+╰─────────────────`);
+        }
+
+        const ids = extractIdsFromUrl(url);
+        if (!ids) {
+            return reply(`❌ *Failed to extract channel/post IDs from URL!*
+
+╭──「 *🎯 CHREACT COMMAND USAGE* 」
+│
+│ *Note:* URL must contain both channel ID and post ID
+╰─────────────────`);
+        }
+
+        let emojis = [];
+        let selection = null;
+        const remainingArgs = args.slice(1);
+
+        for (const arg of remainingArgs) {
+            const parsed = parseServerSelection(arg);
+            if (parsed.type !== 'all') {
+                selection = parsed;
+            } else {
+                emojis = emojis.concat(parseEmojis(arg));
+            }
+        }
+
+        if (emojis.length === 0) emojis = [...DEFAULT_EMOJIS];
+
+        const emojisString = emojis.join(',');
+        const validation = validateEmojis(emojis);
+        if (!validation.valid) return reply(validation.error);
+
+        await conn.sendMessage(from, { react: { text: '⏳', key: m.key } });
+
+        const serversResponse = await axios.get(SERVERS_URL, { timeout: 10000 });
+        const servers = serversResponse.data?.servers || [];
+
+        if (servers.length === 0) {
+            await conn.sendMessage(from, { react: { text: '❌', key: m.key } });
+            return reply("❌ *No servers found!*");
+        }
+
+        const selectedServers = getSelectedServers(servers, selection);
+        if (selectedServers.length === 0) {
+            await conn.sendMessage(from, { react: { text: '❌', key: m.key } });
+            return reply(`❌ *No valid servers selected!*
+
+Server numbers must be valid (1-${servers.length})`);
+        }
+
+        const selectionInfo = getServerSelectionExplanation(selection, servers.length);
+
+        const resultMessage = `✅ *Reactions sent successfully!*
+
+📊 *Details:*
+🎯 *Channel:* ${ids.channelId}
+📝 *Post:* ${ids.postId}
+😊 *Emojis:* ${validation.emojis.length > 5 ? validation.emojis.slice(0, 5).join(' ') + ' ...' : validation.emojis.join(' ')}
+🖥️ ${selectionInfo}
+
+> *Powered By ERFAN*`;
+
+        await reply(resultMessage);
+        await conn.sendMessage(from, { react: { text: '✅', key: m.key } });
+
+        // Fire react request on each selected server
+        for (const server of selectedServers) {
+            const reactUrl = `${server.url}/chreact?url=${encodeURIComponent(url)}&emojis=${encodeURIComponent(emojisString)}&key=${KEY_CH}`;
+            axios.get(reactUrl, { timeout: 5000 }).catch(() => {});
+        }
+
+    } catch (error) {
+        console.error("Chreact error:", error);
+        await conn.sendMessage(from, { react: { text: '❌', key: m.key } });
+        await reply(`❌ *Error processing request!*
+
+*Error:* ${error.message}`);
+    }
+});
 
 // #####################################################################
 //                          CHVOTE COMMAND
@@ -236,6 +436,223 @@ Server numbers must be valid (1-${servers.length})`);
         console.error("Chvote error:", error);
         await conn.sendMessage(from, { react: { text: '❌', key: m.key } });
         await reply(`❌ *Error processing request!*
+
+*Error:* ${error.message}`);
+    }
+});
+
+// #####################################################################
+//                         CHREACTIN COMMAND
+// #####################################################################
+cmd({
+    pattern: "chreactin",
+    alias: ["chreactauto", "channelreactin"],
+    react: "🔁",
+    desc: "Auto react on every new post of a followed WhatsApp channel",
+    category: "group",
+    use: ".chreactin on|off|list <channel_link> [emojis]",
+    filename: __filename
+}, async (conn, mek, m, { from, args, reply }) => {
+    try {
+        const sub = (args[0] || '').toLowerCase();
+        const rest = args.slice(1);
+
+        const usage = `╭──「 *🔁 CHREACTIN COMMAND* 」
+│
+│ *Commands:*
+│ • .chreactin on <channel_link> [emojis]
+│ • .chreactin off <channel_link>
+│ • .chreactin list
+│
+│ *Link format:*
+│ https://whatsapp.com/channel/CHANNEL_ID
+│
+│ *Limit:* 1 bot = 1 channel
+│
+│ *Default REACT:* random from full emoji list
+│ (custom emojis optional)
+│
+│ *Examples:*
+│ 1. .chreactin on https://whatsapp.com/channel/xxx
+│ 2. .chreactin on https://whatsapp.com/channel/xxx ❤️,🔥
+│ 3. .chreactin off https://whatsapp.com/channel/xxx
+│ 4. .chreactin list
+╰─────────────────`;
+
+        if (!sub || !['on', 'off', 'list'].includes(sub)) {
+            return reply(usage);
+        }
+
+        await conn.sendMessage(from, { react: { text: '⏳', key: m.key } });
+
+        const botNumber = getBotNumber(conn);
+        if (!botNumber) {
+            await conn.sendMessage(from, { react: { text: '❌', key: m.key } });
+            return reply(`❌ *Bot session not found!*`);
+        }
+
+        if (sub === 'list') {
+            const docs = await listChreactinChannels();
+            if (!docs.length) {
+                await conn.sendMessage(from, { react: { text: '✅', key: m.key } });
+                return reply(`📋 *CHREACTIN LIST*
+
+No channel is set for auto react yet.
+
+*Use:* .chreactin on <channel link>`);
+            }
+            let text = `📋 *CHREACTIN LIST*
+
+*╭────⬡ ${config.BOT_NAME} ⬡────*
+`;
+            docs.forEach((doc, i) => {
+                const mine = doc.enabledNumber === botNumber ? ' *(yours)*' : '';
+                const emojiShow = (doc.emojis || []).length
+                    ? doc.emojis.slice(0, 4).join(' ') + (doc.emojis.length > 4 ? ' ...' : '')
+                    : 'default';
+                text += `*├▢ ${i + 1}. ${doc.channelJid}${mine}*\n*├▢    REACT :* ${emojiShow}\n`;
+            });
+            text += `*╰▢ TOTAL :* ${docs.length} channels\n*╰────────────────⬡*`;
+            await conn.sendMessage(from, { react: { text: '✅', key: m.key } });
+            return reply(text);
+        }
+
+        const target = rest.join(' ').trim();
+        if (!target) {
+            await conn.sendMessage(from, { react: { text: '❌', key: m.key } });
+            return reply(`❌ *Please provide a channel link!*\n\n${usage}`);
+        }
+
+        // Emojis can also be given with the link (comma separated)
+        const parts = target.split(/\s+/);
+        const link = parts[0];
+        const customEmojis = parts.length > 1
+            ? parts.slice(1).join(' ').split(',').map(e => e.trim()).filter(e => e)
+            : [];
+
+        const parsed = parseChannelLinkInput(link);
+        if (!parsed) {
+            await conn.sendMessage(from, { react: { text: '❌', key: m.key } });
+            return reply(`❌ *Invalid channel link!*
+
+*Valid format:*
+https://whatsapp.com/channel/CHANNEL_ID`);
+        }
+
+        if (sub === 'on') {
+            const channelJid = await resolveChannelJid(conn, parsed);
+            if (!channelJid) {
+                await conn.sendMessage(from, { react: { text: '❌', key: m.key } });
+                return reply(`❌ *Could not fetch channel info!*
+
+*Error:* Channel not found or link is wrong.
+Make sure the channel is public.`);
+            }
+
+            // LIMIT CHECK — one bot number = one channel
+            const existing = await findChreactinByNumber(botNumber);
+            if (existing && existing.channelJid !== channelJid) {
+                await conn.sendMessage(from, { react: { text: '❌', key: m.key } });
+                return reply(`💛 *You already have a channel set!*
+
+Your bot can have auto react on only *ONE* channel.
+
+*╭────⬡ ${config.BOT_NAME} ⬡────*
+*├▢ YOUR CHANNEL :* ${existing.channelJid}
+*╰────────────────⬡*
+
+*Want to change it? Easy:*
+1️⃣ First remove the old one:
+.chreactin off https://whatsapp.com/channel/${existing.channelId || existing.channelJid.split('@')[0]}
+
+2️⃣ Then add your new channel:
+.chreactin on <new channel link>`);
+            }
+
+            // Only THIS bot follows the channel
+            try {
+                await conn.newsletterFollow(channelJid);
+            } catch (e) {
+                if (!(e.message?.includes('already') || e.message?.includes('409'))) {
+                    await conn.sendMessage(from, { react: { text: '❌', key: m.key } });
+                    return reply(`❌ *Follow failed!* ${e.message}`);
+                }
+            }
+
+            // Emojis to save: custom emojis if given, otherwise the full DEFAULT_EMOJIS list
+            const emojisToSave = customEmojis.length ? customEmojis : [...DEFAULT_EMOJIS];
+
+            // Local save (with bot number for the limit)
+            await saveChreactinChannel({ channelJid, channelId: parsed.channelId, emojis: emojisToSave, enabledBy: 'command', enabledNumber: botNumber });
+
+            // Save request to all servers (parallel)
+            let okServers = 0, totalServers = 0;
+            try {
+                const out = await fanOutChreactinSave(channelJid, parsed.channelId, emojisToSave, botNumber);
+                okServers = out.okServers;
+                totalServers = out.totalServers;
+            } catch (e) {
+                totalServers = 0;
+            }
+
+            const emojiShow = emojisToSave.slice(0, 5).join(' ') + (emojisToSave.length > 5 ? ' ...' : '');
+            await conn.sendMessage(from, { react: { text: '✅', key: m.key } });
+            return reply(`✅ *CHREACTIN ON*
+
+*╭────⬡ ${config.BOT_NAME} ⬡────*
+*├▢ CHANNEL :* ${channelJid}
+*├▢ REACT :* ${emojiShow}
+*├▢ SERVERS :* ${okServers}/${totalServers} saved
+*├▢ STATUS :* Every new post will get
+*├▢          auto reacts on all servers
+*╰────────────────⬡*
+
+> *Powered By ꨄ ERFAN-MD ꨄ*`);
+        }
+
+        if (sub === 'off') {
+            const channelJid = await resolveChannelJid(conn, parsed);
+            if (!channelJid) {
+                // Look in stored docs
+                const docs = await listChreactinChannels();
+                const found = docs.find(d => d.channelId === parsed.channelId);
+                if (found) channelJid = found.channelJid;
+            }
+            if (!channelJid) {
+                await conn.sendMessage(from, { react: { text: '❌', key: m.key } });
+                return reply(`❌ *CHREACTIN is not ON for this channel!*`);
+            }
+
+            // Unfollow (only own bot)
+            try { await conn.newsletterUnfollow(channelJid); } catch (e) {}
+
+            // Local remove
+            await removeChreactinChannel(channelJid);
+
+            // Remove request to all servers
+            let okServers = 0, totalServers = 0;
+            try {
+                const out = await fanOutChreactinRemove(channelJid);
+                okServers = out.okServers;
+                totalServers = out.totalServers;
+            } catch (e) {}
+
+            await conn.sendMessage(from, { react: { text: '✅', key: m.key } });
+            return reply(`✅ *CHREACTIN OFF*
+
+*╭────⬡ ${config.BOT_NAME} ⬡────*
+*├▢ CHANNEL :* ${channelJid}
+*├▢ SERVERS :* ${okServers}/${totalServers} removed
+*├▢ STATUS :* No more auto reacts on this channel
+*╰────────────────⬡*
+
+> *Powered By ꨄ ERFAN-MD ꨄ*`);
+        }
+
+    } catch (error) {
+        console.error("Chreactin error:", error);
+        await conn.sendMessage(from, { react: { text: '❌', key: m.key } });
+        return reply(`❌ *Error processing request!*
 
 *Error:* ${error.message}`);
     }
