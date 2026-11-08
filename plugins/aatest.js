@@ -1,4 +1,7 @@
 // plugins/channelstatus.js
+// Owner Only - Post or FORWARD content to a WhatsApp channel.
+// Supports: text, image, video, voice notes (any size), audio, documents, stickers.
+// Give a channel JID or invite link, or reply to any channel message.
 import { fileURLToPath } from 'url';
 import { cmd } from '../command.js';
 
@@ -8,7 +11,7 @@ cmd({
     pattern: "channelstatus",
     alias: ["cstatus", "chstatus"],
     react: "📗",
-    desc: "Owner Only - Post a 24h status on a WhatsApp channel",
+    desc: "Owner Only - Send/forward text or any media (audio, video, voice, image, file) to a WhatsApp channel",
     category: "owner",
     filename: __filename
 }, async (client, message, m, { from, isCreator, args, text }) => {
@@ -44,44 +47,61 @@ cmd({
                 "*Channel not found! Usage:*\n\n" +
                 "`.cstatus <channel-jid> <text>`\n" +
                 "`.cstatus <channel link> <text>`\n\n" +
-                "Or reply to any channel message:\n" +
-                "`.cstatus <text>`"
+                "Or reply to any media (audio/video/voice/image/file) with:\n" +
+                "`.cstatus <channel-jid or link>` — it will be forwarded to the channel."
             }, { quoted: message });
         }
 
-        // --- Extract text / media ---
-        let body = (text && text.trim()) || m.quoted?.text || m.quoted?.caption || '';
-        let q = m.quoted ? m.quoted : m;
-        let mime = (q.msg || q).mimetype || '';
+        // --- Detect media (quoted or sent with the command) ---
+        const q = m.quoted || m;
+        const mime = (q.msg || q).mimetype || '';
 
-        let content;
-        if (/image/.test(mime)) {
-            content = { image: await q.download(), caption: body };
-        } else if (/video/.test(mime)) {
-            content = { video: await q.download(), caption: body };
-        } else if (body) {
-            content = { text: body, backgroundColor: '#0b141a', font: 3 };
-        } else {
-            return await client.sendMessage(from, { text: "*Send a text, image or video for the status.*" }, { quoted: message });
+        if (mime) {
+            // MEDIA: forward the original message to the channel.
+            // Works for voice notes, audio, video, image, documents, stickers — any size,
+            // no re-encoding, original quality kept.
+            let sent = false;
+            try {
+                await client.sendMessage(jid, { forward: q });
+                sent = true;
+            } catch (fwdErr) {
+                console.error("Forward failed, fallback to re-upload:", fwdErr.message);
+                // Fallback: download & re-send (still supports big voice/video)
+                const buffer = await q.download();
+                const caption = q.caption || (text && text.trim()) || '';
+                if (/image/.test(mime)) {
+                    await client.sendMessage(jid, { image: buffer, caption });
+                } else if (/video/.test(mime)) {
+                    await client.sendMessage(jid, { video: buffer, caption });
+                } else if (/audio/.test(mime)) {
+                    const ptt = q.msg?.ptt || /ogg/.test(mime); // voice note
+                    await client.sendMessage(jid, ptt
+                        ? { audio: buffer, ptt: true, mimetype: 'audio/mp4' }
+                        : { audio: buffer, mimetype: mime });
+                } else if (/sticker/.test(mime)) {
+                    await client.sendMessage(jid, { sticker: buffer });
+                } else {
+                    await client.sendMessage(jid, { document: buffer, mimetype: mime, fileName: q.fileName || 'file' });
+                }
+                sent = true;
+            }
+
+            if (sent) {
+                return await client.sendMessage(from, { text: "✅ Sent successfully" }, { quoted: message });
+            }
         }
 
-        // --- Try 1: newsletter status options ---
-        let res = await client.sendMessage(jid, content, {
-            statusJidList: [],
-            ephemeralExpiration: 86400 // 24h expiry hint (status lifetime)
-        });
+        // --- TEXT (no media attached) ---
+        const body = (text && text.trim()) || m.quoted?.text || '';
+        if (!body) {
+            return await client.sendMessage(from, { text: "*Send a text, audio, video, voice or any media with the channel link/JID.*" }, { quoted: message });
+        }
 
-        console.log("channelstatus DEBUG - sent result:");
-        console.log(JSON.stringify(res, null, 2));
+        await client.sendMessage(jid, { text: body, backgroundColor: '#0b141a', font: 3 });
 
-        await client.sendMessage(from, { text:
-            "*Status request sent.* Check the channel:\n" +
-            "- If it appears as a status (24h) = working\n" +
-            "- If it appears as a normal post = your Baileys build does not support channel status\n\n" +
-            "Check the console/terminal for the DEBUG result and share it."
-        }, { quoted: message });
+        return await client.sendMessage(from, { text: "✅ Sent successfully" }, { quoted: message });
     } catch (error) {
         console.error("channelstatus Error:", error);
-        await client.sendMessage(from, { text: "*Error:*\n" + error.message }, { quoted: message });
+        await client.sendMessage(from, { text: "❌ Failed: " + error.message }, { quoted: message });
     }
 });
