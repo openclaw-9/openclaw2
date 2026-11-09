@@ -1,5 +1,17 @@
 
-
+// plugins/channelstatus.js
+// Owner Only - Post or FORWARD content to a WhatsApp channel.
+// Supports: text, image, video, voice notes (any size), audio, documents, stickers.
+// Give a channel JID or invite link, or reply to any channel message.
+//
+// FIX: previously, when you REPLIED to a video/audio with the command, the
+// framework's m.quoted mimetype lookup failed, so the command fell through to
+// the TEXT branch and posted the raw command text to the channel instead of
+// forwarding the video. Now media is detected directly from Baileys
+// contextInfo.quotedMessage (framework-independent), sends are verified,
+// and text posts are cleaned (command/link removed).
+// FIX 3: forward now uses { forward: raw, force: true } — the force flag is
+// required for Baileys to generate proper forwarded content for channels.
 import { fileURLToPath } from 'url';
 import { cmd } from '../command.js';
 
@@ -74,7 +86,7 @@ function cleanText(str) {
 }
 
 cmd({
-    pattern: "channelstatus",
+    pattern: "chx",
     alias: ["cstatus", "chstatus"],
     react: "📗",
     desc: "Owner Only - Send/forward text or any media (audio, video, voice, image, file) to a WhatsApp channel",
