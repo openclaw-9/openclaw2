@@ -338,12 +338,29 @@ cmd({
         if (!args[0]) {
             return reply(`❌ *Please provide a channel post URL!*
 
-📌 *Usage:* .vote <url> <option> [selection]
-*Examples:*
-.vote https://whatsapp.com/channel/xxx/107 1
-.vote https://whatsapp.com/channel/xxx/107 a
-.vote https://whatsapp.com/channel/xxx/107 1 #1/2/3
-.vote https://whatsapp.com/channel/xxx/107 a &5`);
+╭──「 *🗳️ VOTE COMMAND USAGE* 」
+│
+│ *Basic Usage:*
+│ .vote <channel_post_url> <option> [server_selection]
+│
+│ *Option formats:*
+│ • 1, 2, 3 ...  → option by number
+│ • A, B, C, D ... → option by letter
+│ • A,C or 1,2   → multi-select (if poll allows)
+│ • =Option text → vote by exact option name
+│
+│ *Server Selection:*
+│ • #1/2/3  → Use specific servers
+│ • &5      → Use first 5 servers
+│ • &6+9    → Use servers 6 to 9
+│
+│ *Examples:*
+│ 1. .vote https://whatsapp.com/channel/xxx/107 1
+│ 2. .vote link A
+│ 3. .vote link A,C #1/2/3
+│ 4. .vote link =ERFAN MD
+│ 5. .vote link =ERFAN MD &5
+╰─────────────────`);
         }
 
         const url = args[0];
@@ -352,13 +369,34 @@ cmd({
         const ids = extractIdsFromUrl(url);
         if (!ids) return reply(`❌ *Failed to extract channel/post IDs from URL!*`);
 
-        const option = args[1];
-        if (!option) return reply(`❌ *Please provide an option!*\n*Example:* .vote <url> 1`);
-
+        // Collect option text and server selection (ERFAN style)
         let selection = null;
-        if (args[2]) {
-            const parsed = parseServerSelection(args[2]);
-            if (parsed.type !== 'all') selection = parsed;
+        const optionParts = [];
+
+        for (let i = 1; i < args.length; i++) {
+            const parsedSel = parseServerSelection(args[i]);
+            if (parsedSel.type !== 'all') {
+                selection = parsedSel;
+            } else {
+                optionParts.push(args[i]);
+            }
+        }
+
+        const optionText = optionParts.join(' ').trim();
+
+        if (!optionText) {
+            return reply(`❌ *Please provide an option!*
+
+╭──「 *🗳️ VOTE COMMAND USAGE* 」
+│
+│ .vote <url> <option> [server_selection]
+│
+│ *Examples:*
+│ .vote link 1
+│ .vote link B #1/2/3
+│ .vote link A,C
+│ .vote link =ERFAN MD &5
+╰─────────────────`);
         }
 
         await conn.sendMessage(from, { react: { text: '⏳', key: m.key } });
@@ -383,19 +421,39 @@ cmd({
 
         const selectionInfo = getServerSelectionExplanation(selection, servers.length);
 
-        // Send /vote request to each selected server (parallel)
+        // Multi-select support: "A,C" or "1,2" → one /vote request per option.
+        // Conversion is done right here inside the command (no helper function):
+        //   A/a → 1, B/b → 2, C/c → 3, D/d → 4 ... (upper or lower case, both work)
+        //   "=Some Name" → exact option name (the = is stripped, spaces allowed)
+        //   numbers and plain names pass through unchanged
+        const optionList = optionText.split(',')
+            .map(t => {
+                const tok = t.trim();
+                if (!tok) return null;
+                if (tok.startsWith('=')) return tok.slice(1).trim() || null;
+                if (/^[a-zA-Z]$/.test(tok)) return String(tok.toUpperCase().charCodeAt(0) - 64); // A=1, B=2, C=3 ...
+                return tok;
+            })
+            .filter(t => t);
+
+        // Send /vote request to each selected server for each option (parallel)
         // NOTE: the server's vote endpoint is /vote (NOT /chvote) and it
         // returns { success, voted, total, choice }
-        const requestPromises = selectedServers.map(server => {
-            const voteUrl = `${server.url}/vote?key=${SECRET_KEY}&url=${encodeURIComponent(url)}&option=${encodeURIComponent(option)}`;
-            return axios.get(voteUrl, { timeout: 15000 })
-                .then(r => r.data)
-                .catch(e => ({ success: false, error: e.message }));
-        });
+        const requestPromises = [];
+        for (const server of selectedServers) {
+            for (const opt of optionList) {
+                const voteUrl = `${server.url}/vote?key=${SECRET_KEY}&url=${encodeURIComponent(url)}&option=${encodeURIComponent(opt)}`;
+                requestPromises.push(
+                    axios.get(voteUrl, { timeout: 15000 })
+                        .then(r => r.data)
+                        .catch(e => ({ success: false, error: e.message }))
+                );
+            }
+        }
 
         const serverResults = await Promise.all(requestPromises);
 
-        const okServers = serverResults.filter(r => r?.success).length;
+        const okRequests = serverResults.filter(r => r?.success).length;
         const totalBots = serverResults.reduce((a, r) => a + (r?.total || 0), 0);
         const totalVoted = serverResults.reduce((a, r) => a + (r?.voted || 0), 0);
 
@@ -404,11 +462,11 @@ cmd({
 📊 *Details:*
 🎯 *Channel:* ${ids.channelId}
 📝 *Post:* ${ids.postId}
-🗳️ *Option:* ${option}
+🗳️ *Options:* ${optionList.join(', ')}
 🖥️ ${selectionInfo}
 
 📈 *Server responses:*
-• Servers OK: ${okServers}/${selectedServers.length}
+• Requests OK: ${okRequests}/${serverResults.length}
 • Total bots: ${totalBots}
 • Votes sent: ${totalVoted}
 
