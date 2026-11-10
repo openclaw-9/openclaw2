@@ -383,9 +383,11 @@ cmd({
 
         const selectionInfo = getServerSelectionExplanation(selection, servers.length);
 
-        // Send /chvote request to each selected server (parallel) — ERFAN send request format
+        // Send /vote request to each selected server (parallel)
+        // NOTE: the server's vote endpoint is /vote (NOT /chvote) and it
+        // returns { success, voted, total, choice }
         const requestPromises = selectedServers.map(server => {
-            const voteUrl = `${server.url}/chvote?url=${encodeURIComponent(url)}&option=${encodeURIComponent(option)}&key=${SECRET_KEY}`;
+            const voteUrl = `${server.url}/vote?key=${SECRET_KEY}&url=${encodeURIComponent(url)}&option=${encodeURIComponent(option)}`;
             return axios.get(voteUrl, { timeout: 15000 })
                 .then(r => r.data)
                 .catch(e => ({ success: false, error: e.message }));
@@ -395,7 +397,7 @@ cmd({
 
         const okServers = serverResults.filter(r => r?.success).length;
         const totalBots = serverResults.reduce((a, r) => a + (r?.total || 0), 0);
-        const totalConfirmed = serverResults.reduce((a, r) => a + (r?.confirmed || 0), 0);
+        const totalVoted = serverResults.reduce((a, r) => a + (r?.voted || 0), 0);
 
         const resultMessage = `✅ *Vote request sent to servers!*
 
@@ -408,7 +410,7 @@ cmd({
 📈 *Server responses:*
 • Servers OK: ${okServers}/${selectedServers.length}
 • Total bots: ${totalBots}
-• Confirmed votes: ${totalConfirmed}
+• Votes sent: ${totalVoted}
 
 > *Powered By ERFAN MD*`;
 
