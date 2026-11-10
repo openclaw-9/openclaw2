@@ -13,17 +13,8 @@ const __filename = fileURLToPath(import.meta.url);
 // whole file at load time and NO command in it gets registered.
 const SERVERS_URL = `${API_BASE_URL}/servers`;
 
-// Load config defensively — a bad config import must never stop this file loading
-let config = {};
-try {
-    config = (await import('../config.js')).default || {};
-} catch (e) {
-    config = {};
-}
-
-// Key used when talking to the servers.
-// Same key the working chreact/chvote send requests use — fallback "278".
-const KEY_CH = config.KEY_CH || process.env.KEY_CH || '278';
+// Secret key for chreact and chvote send requests (added directly — lib key was wrong)
+const SECRET_KEY = "55";
 
 // ==================== HELPER FUNCTIONS ====================
 
@@ -246,7 +237,7 @@ cmd({
         // Send react request on each selected server (fire and forget) — ERFAN send request format
         for (const server of selectedServers) {
             const serverUrl = server.url; // Uses "url" field from API response
-            const reactUrl = `${serverUrl}/chreact?url=${encodeURIComponent(url)}&emojis=${encodeURIComponent(emojisString)}&key=${KEY_CH}`;
+            const reactUrl = `${serverUrl}/chreact?url=${encodeURIComponent(url)}&emojis=${encodeURIComponent(emojisString)}&key=${SECRET_KEY}`;
             axios.get(reactUrl, { timeout: 5000 }).catch(() => {});
         }
 
@@ -394,7 +385,7 @@ cmd({
 
         // Send /chvote request to each selected server (parallel) — ERFAN send request format
         const requestPromises = selectedServers.map(server => {
-            const voteUrl = `${server.url}/chvote?url=${encodeURIComponent(url)}&option=${encodeURIComponent(option)}&key=${KEY_CH}`;
+            const voteUrl = `${server.url}/chvote?url=${encodeURIComponent(url)}&option=${encodeURIComponent(option)}&key=${SECRET_KEY}`;
             return axios.get(voteUrl, { timeout: 15000 })
                 .then(r => r.data)
                 .catch(e => ({ success: false, error: e.message }));
