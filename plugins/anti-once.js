@@ -1,8 +1,10 @@
-// plugins/viewonce.js - ESM Version (FIXED)
+// plugins/viewonce.js - ESM Version (FIXED v2)
 // Fixes:
-//  1) "No valid media URL or directPath present in message" -> rebuilds a full
-//     WebMessageInfo from the quoted proto so the downloader has url/directPath/mediaKey.
-//  2) Silent owner failure -> bot's own messages (fromMe) now count as owner too.
+//  1) "No valid media URL or directPath present in message" -> for linked-device
+//     (fromMe) senders the framework strips the quoted proto, so we now rebuild it
+//     from the .vv command message's own contextInfo (always complete), with
+//     quoted.msg / fakeObj / store lookups as backups.
+//  2) Silent owner failure -> bot's own messages (fromMe) count as owner too.
 
 import { fileURLToPath } from 'url';
 import { cmd } from '../command.js';
@@ -16,26 +18,50 @@ const positiveKeywords = ["❤️", "nice", "oh", "good", "cute", "🌝", "🥵"
 // ==================== HELPERS ====================
 
 // Containers that can wrap the real media message
-const WRAPPERS = ["viewOnceMessage", "viewOnceMessageV2", "viewOnceMessageV2Extension", "ephemeralMessage", "editedMessage"];
+const WRAPPERS = ["viewOnceMessage", "viewOnceMessageV2", "viewOnceMessageV2Extension", "ephemeralMessage", "editedMessage", "futureProofMessage"];
+const MEDIA_TYPES = ["imageMessage", "videoMessage", "audioMessage", "documentMessage", "stickerMessage"];
 
+// Finds the actual media proto inside any wrapper chain.
+// Returns { type: "imageMessage", content: {...} } or null.
 function unwrapMedia(raw) {
     let node = raw;
     let guard = 0;
     while (node && typeof node === 'object' && guard++ < 10) {
-        const key = Object.keys(node).find((k) => WRAPPERS.includes(k));
-        if (!key) break;
-        node = node[key]?.message || node[key];
+        const type = Object.keys(node).find((k) => MEDIA_TYPES.includes(k));
+        if (type) return { type, content: node[type] };
+        const wrapper = Object.keys(node).find((k) => WRAPPERS.includes(k));
+        if (!wrapper) break;
+        node = node[wrapper]?.message || node[wrapper];
     }
-    return node;
+    return null;
 }
 
-// Robust download: tries the framework's download() first, then rebuilds the
-// full message object (this restores url / directPath / mediaKey that the
-// shallow quoted copy loses) and downloads from that.
-async function safeDownloadMedia(client, quoted, contextJid) {
+// Make sure the proto carries a URL the downloader can use
+function ensureUrl(content) {
+    if (!content.url && content.directPath) {
+        content.url = 'https://mmg.whatsapp.net' + content.directPath;
+    }
+    return content;
+}
+
+// Look the original message up in the connection's message store (backup path)
+async function fetchStoredMessage(client, jid, id) {
+    try {
+        if (client.store?.loadMessage) return await client.store.loadMessage(jid, id);
+        if (client.store?.messages?.[jid]?.get) return client.store.messages[jid].get(id);
+        if (client.store?.messages?.get) return client.store.messages.get(jid)?.get(id);
+        if (client.chats?.[jid]?.messages?.[id]) return client.chats[jid].messages[id];
+    } catch (e) {
+        // ignore, best-effort only
+    }
+    return null;
+}
+
+// Robust download with multiple fallbacks. Returns the media buffer.
+async function safeDownloadMedia(client, quoted, message, contextJid) {
     const errors = [];
 
-    // Attempt 1: built-in download
+    // ---------- Attempt 1: the framework's built-in download ----------
     try {
         if (typeof quoted.download === 'function') {
             const buf = await quoted.download();
@@ -46,40 +72,72 @@ async function safeDownloadMedia(client, quoted, contextJid) {
         errors.push(e.message);
     }
 
-    // Attempt 2: reconstruct a complete message for the downloader
-    try {
-        const mtype = quoted.mtype;
-        if (mtype && typeof mtype === 'string') {
-            const proto =
-                unwrapMedia(quoted.msg) ||
-                unwrapMedia(quoted.message && quoted.message[mtype]) ||
-                unwrapMedia(quoted.message);
+    // ---------- Build a list of candidate (key, proto) sources ----------
+    const candidates = [];
 
-            if (proto && typeof proto === 'object') {
-                const key =
-                    (quoted.fakeObj && quoted.fakeObj.key) ||
-                    quoted.key || {
-                        remoteJid: contextJid,
-                        id: quoted.id,
-                        fromMe: false,
-                        participant: quoted.participant,
-                    };
+    // Attempt 2 source: contextInfo of the command message itself.
+    // WhatsApp always ships the FULL quoted media here, even when the
+    // serializer drops it from m.quoted (the linked-device case).
+    const ctx = message?.message?.extendedTextMessage?.contextInfo;
+    if (ctx?.quotedMessage) {
+        candidates.push({
+            unwrapped: unwrapMedia(ctx.quotedMessage),
+            key: {
+                remoteJid: ctx.remoteJid || contextJid,
+                id: quoted.id,
+                fromMe: false,
+                participant: ctx.participant || quoted.participant,
+            },
+        });
+    }
 
-                const reconstructed = { key, message: { [mtype]: proto } };
+    // Attempt 3 source: what the serializer kept on m.quoted
+    candidates.push({
+        unwrapped: unwrapMedia(quoted.msg) || unwrapMedia(quoted.message),
+        key: quoted.fakeObj?.key || quoted.key || {
+            remoteJid: contextJid,
+            id: quoted.id,
+            fromMe: false,
+            participant: quoted.participant,
+        },
+    });
 
-                if (typeof client.downloadMediaMessage === 'function') {
-                    const buf = await client.downloadMediaMessage(reconstructed);
-                    if (buf && buf.length) return buf;
-                    errors.push('reconstructed download returned empty');
-                } else {
-                    errors.push('client.downloadMediaMessage not available');
-                }
-            } else {
-                errors.push('quoted proto not found for ' + mtype);
+    // Attempt 4 source: the raw WebMessageInfo behind the quote
+    if (quoted.fakeObj?.message) {
+        candidates.push({ unwrapped: unwrapMedia(quoted.fakeObj.message), key: quoted.fakeObj.key });
+    }
+
+    for (const cand of candidates) {
+        if (!cand.unwrapped) continue;
+        const { type, content } = cand.unwrapped;
+        if (!content || typeof content !== 'object') continue;
+        try {
+            const reconstructed = { key: cand.key, message: { [type]: ensureUrl({ ...content }) } };
+            if (typeof client.downloadMediaMessage === 'function') {
+                const buf = await client.downloadMediaMessage(reconstructed);
+                if (buf && buf.length) return buf;
+                errors.push(`reconstructed (${type}) download returned empty`);
             }
+        } catch (e) {
+            errors.push(`reconstruct(${type}): ${e.message}`);
+        }
+    }
+
+    // ---------- Attempt 5: find the original message in the store ----------
+    try {
+        const stored = await fetchStoredMessage(client, contextJid, quoted.id);
+        if (stored?.message) {
+            const unwrapped = unwrapMedia(stored.message);
+            if (unwrapped && typeof client.downloadMediaMessage === 'function') {
+                const buf = await client.downloadMediaMessage({ key: stored.key || { remoteJid: contextJid, id: quoted.id, fromMe: false }, message: { [unwrapped.type]: ensureUrl({ ...unwrapped.content }) } });
+                if (buf && buf.length) return buf;
+                errors.push('store download returned empty');
+            }
+        } else {
+            errors.push('message not found in store');
         }
     } catch (e) {
-        errors.push(e.message);
+        errors.push(`store: ${e.message}`);
     }
 
     throw new Error(
@@ -96,23 +154,11 @@ function buildMediaContent(quoted, buffer, DESCRIPTION) {
 
     switch (quoted.mtype) {
         case 'imageMessage':
-            return {
-                image: buffer,
-                caption,
-                mimetype: quoted.mimetype || 'image/jpeg',
-            };
+            return { image: buffer, caption, mimetype: quoted.mimetype || 'image/jpeg' };
         case 'videoMessage':
-            return {
-                video: buffer,
-                caption,
-                mimetype: quoted.mimetype || 'video/mp4',
-            };
+            return { video: buffer, caption, mimetype: quoted.mimetype || 'video/mp4' };
         case 'audioMessage':
-            return {
-                audio: buffer,
-                mimetype: 'audio/mp4',
-                ptt: quoted.ptt || false,
-            };
+            return { audio: buffer, mimetype: 'audio/mp4', ptt: quoted.ptt || false };
         default:
             return null;
     }
@@ -129,19 +175,16 @@ async function safeErrorReply(client, from, message, text) {
 
 // ==================== KEYWORD HANDLER ====================
 
-// No prefix keyword handler for view once messages (owner only)
 cmd({
     on: 'body',
 }, async (client, message, m, {
     from,
     body,
     isCreator,
-    reply,
     sender,
     userConfig,
 }) => {
     try {
-        // Owner OR the bot's own account
         const isOwner = isCreator || message.fromMe || message.key?.fromMe;
         if (!isOwner) return;
 
@@ -151,11 +194,10 @@ cmd({
         const hasExactKeywordOnly = positiveKeywords.includes(messageText);
 
         if (hasExactKeywordOnly && message.quoted?.viewOnce) {
-            const buffer = await safeDownloadMedia(client, message.quoted, from);
+            const buffer = await safeDownloadMedia(client, message.quoted, message, from);
             const content = buildMediaContent(message.quoted, buffer, DESCRIPTION);
             if (!content) return; // Silently ignore unsupported types
 
-            // Send the view once content to the user's DM
             await client.sendMessage(message.sender, content, { quoted: message });
         }
     } catch (error) {
@@ -192,7 +234,7 @@ cmd({
             }, { quoted: message });
         }
 
-        const buffer = await safeDownloadMedia(client, m.quoted, from);
+        const buffer = await safeDownloadMedia(client, m.quoted, message, from);
         const content = buildMediaContent(m.quoted, buffer, DESCRIPTION);
         if (!content) {
             return await client.sendMessage(from, {
@@ -237,7 +279,7 @@ cmd({
             }, { quoted: message });
         }
 
-        const buffer = await safeDownloadMedia(client, m.quoted, from);
+        const buffer = await safeDownloadMedia(client, m.quoted, message, from);
         const content = buildMediaContent(m.quoted, buffer, DESCRIPTION);
         if (!content) {
             return await client.sendMessage(from, {
@@ -277,7 +319,7 @@ cmd({
             }, { quoted: message });
         }
 
-        const buffer = await safeDownloadMedia(client, m.quoted, from);
+        const buffer = await safeDownloadMedia(client, m.quoted, message, from);
         const content = buildMediaContent(m.quoted, buffer, DESCRIPTION);
         if (!content) {
             return await client.sendMessage(from, {
