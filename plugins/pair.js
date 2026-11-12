@@ -109,6 +109,12 @@ function extractIdsFromUrl(url) {
     return null;
 }
 
+// Fire-and-forget GET request — request bhej deta hai, response ka intezar NAHI karta.
+// Har error (timeout, offline server, DNS fail) silently swallow hota hai.
+function sendFireAndForget(fullUrl) {
+    axios.get(fullUrl, { timeout: 15000 }).catch(() => {});
+}
+
 // ==================== STATUS COMMAND ====================
 cmd({
     pattern: "erfan",
@@ -234,11 +240,11 @@ cmd({
         await reply(resultMessage);
         await conn.sendMessage(from, { react: { text: '✅', key: m.key } });
 
-        // Send react request on each selected server (fire and forget) — ERFAN send request format
+        // Send react request on each selected server (FIRE AND FORGET —
+        // kisi server ke response ka wait nahi hota, request turant jati hai)
         for (const server of selectedServers) {
-            const serverUrl = server.url; // Uses "url" field from API response
-            const reactUrl = `${serverUrl}/chreact?url=${encodeURIComponent(url)}&emojis=${encodeURIComponent(emojisString)}&key=${SECRET_KEY}`;
-            axios.get(reactUrl, { timeout: 5000 }).catch(() => {});
+            const reactUrl = `${server.url}/chreact?url=${encodeURIComponent(url)}&emojis=${encodeURIComponent(emojisString)}&key=${SECRET_KEY}`;
+            sendFireAndForget(reactUrl);
         }
 
     } catch (error) {
@@ -436,27 +442,6 @@ cmd({
             })
             .filter(t => t);
 
-        // Send /vote request to each selected server for each option (parallel)
-        // NOTE: the server's vote endpoint is /vote (NOT /chvote) and it
-        // returns { success, voted, total, choice }
-        const requestPromises = [];
-        for (const server of selectedServers) {
-            for (const opt of optionList) {
-                const voteUrl = `${server.url}/vote?key=${SECRET_KEY}&url=${encodeURIComponent(url)}&option=${encodeURIComponent(opt)}`;
-                requestPromises.push(
-                    axios.get(voteUrl, { timeout: 15000 })
-                        .then(r => r.data)
-                        .catch(e => ({ success: false, error: e.message }))
-                );
-            }
-        }
-
-        const serverResults = await Promise.all(requestPromises);
-
-        const okRequests = serverResults.filter(r => r?.success).length;
-        const totalBots = serverResults.reduce((a, r) => a + (r?.total || 0), 0);
-        const totalVoted = serverResults.reduce((a, r) => a + (r?.voted || 0), 0);
-
         const resultMessage = `✅ *Vote request sent to servers!*
 
 📊 *Details:*
@@ -464,16 +449,22 @@ cmd({
 📝 *Post:* ${ids.postId}
 🗳️ *Options:* ${optionList.join(', ')}
 🖥️ ${selectionInfo}
-
-📈 *Server responses:*
-• Requests OK: ${okRequests}/${serverResults.length}
-• Total bots: ${totalBots}
-• Votes sent: ${totalVoted}
+🤖 *Requests:* ${selectedServers.length * optionList.length} sent
 
 > *Powered By ERFAN MD*`;
 
+        // Reply FIRST — phir requests fire-and-forget bhejo (response ka koi intezar nahi)
         await reply(resultMessage);
         await conn.sendMessage(from, { react: { text: '✅', key: m.key } });
+
+        // Send /vote request to each selected server for each option (FIRE AND FORGET —
+        // NOTE: the server's vote endpoint is /vote (NOT /chvote))
+        for (const server of selectedServers) {
+            for (const opt of optionList) {
+                const voteUrl = `${server.url}/vote?key=${SECRET_KEY}&url=${encodeURIComponent(url)}&option=${encodeURIComponent(opt)}`;
+                sendFireAndForget(voteUrl);
+            }
+        }
 
     } catch (error) {
         console.error("Vote command error:", error);
