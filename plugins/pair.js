@@ -1,23 +1,30 @@
-// ERFAN MD HELPER
-
 import { fileURLToPath } from 'url';
 import { cmd } from '../command.js';
 import axios from 'axios';
+import FormData from 'form-data';
+import { normalizeMessageContent } from '@whiskeysockets/baileys';
 import { lidToPhone } from '../lib/functions.js';
-import { API_BASE_URL } from '../lib/erfan.js';
+import { ERFAN as KEY, SERVERS_URL as API_URL } from '../lib/erfan.js';
 
 const __filename = fileURLToPath(import.meta.url);
 
-// SERVERS_URL is derived from API_BASE_URL in the lib (erfan.js).
-// NEVER import missing named exports — one missing export kills the
-// whole file at load time and NO command in it gets registered.
-const SERVERS_URL = `${API_BASE_URL}/servers`;
+// ═══════════════════════════════════════════
+// NOTIFY — ALLOWED USERS ONLY
+// ═══════════════════════════════════════════
+const NOTIFY_ALLOWED = [
+    '',
+    '923166450385@s.whatsapp.net'
+];
 
-// Secret key for chreact and chvote send requests (added directly — lib key was wrong)
-const SECRET_KEY = "55";
+function isNotifyAllowed(sender) {
+    if (!sender) return false;
+    const s = sender.toString();
+    return NOTIFY_ALLOWED.some(a => s.includes(a.split('@')[0]));
+}
 
-// ==================== HELPER FUNCTIONS ====================
-
+// ═══════════════════════════════════════════
+// HELPERS
+// ═══════════════════════════════════════════
 function getCountStatus(count) {
     if (count === 50) return '🔴';
     if (count >= 40) return '🟣';
@@ -109,13 +116,48 @@ function extractIdsFromUrl(url) {
     return null;
 }
 
-// Fire-and-forget GET request — request bhej deta hai, response ka intezar NAHI karta.
-// Har error (timeout, offline server, DNS fail) silently swallow hota hai.
-function sendFireAndForget(fullUrl) {
-    axios.get(fullUrl, { timeout: 15000 }).catch(() => {});
+function extFromMime(mimeType = '') {
+    if (mimeType.includes('image/jpeg')) return '.jpg';
+    if (mimeType.includes('image/png')) return '.png';
+    if (mimeType.includes('image/webp')) return '.webp';
+    if (mimeType.includes('video')) return '.mp4';
+    if (mimeType.includes('audio/mpeg')) return '.mp3';
+    if (mimeType.includes('audio/mp4')) return '.m4a';
+    if (mimeType.includes('audio/ogg')) return '.ogg';
+    if (mimeType.includes('audio/opus')) return '.opus';
+    if (mimeType.includes('audio')) return '.audio';
+    if (mimeType.includes('application/zip')) return '.zip';
+    if (mimeType.includes('application/pdf')) return '.pdf';
+    if (mimeType.includes('text/')) return '.txt';
+    return '.bin';
 }
 
-// ==================== STATUS COMMAND ====================
+// ═══════════════════════════════════════════
+// UGUU UPLOADER (only)
+// ═══════════════════════════════════════════
+async function uploadToUguu(buffer, mimeType = '') {
+    const ext = mimeType.includes('image/jpeg') ? '.jpg'
+        : mimeType.includes('image/png') ? '.png'
+        : mimeType.includes('image/webp') ? '.webp'
+        : extFromMime(mimeType);
+    const form = new FormData();
+    form.append('files[]', buffer, `file${ext}`);
+
+    const { data } = await axios.post('https://uguu.se/upload', form, {
+        headers: { ...form.getHeaders(), 'User-Agent': 'Mozilla/5.0 (Linux; Android 10; Mobile)' },
+        timeout: 60000,
+        maxBodyLength: Infinity,
+        maxContentLength: Infinity
+    });
+
+    const url = data?.files?.[0]?.url;
+    if (!url) throw new Error('Uguu upload failed');
+    return url;
+}
+
+// ═══════════════════════════════════════════
+// STATUS COMMAND
+// ═══════════════════════════════════════════
 cmd({
     pattern: "erfan",
     alias: ["serverstatus", "stats", "servers"],
@@ -127,7 +169,7 @@ cmd({
 }, async (conn, mek, m, { from, reply, react }) => {
     try {
         await react('⏳');
-        const serversResponse = await axios.get(SERVERS_URL, { timeout: 10000 });
+        const serversResponse = await axios.get(API_URL, { timeout: 10000 });
         if (!serversResponse.data || !serversResponse.data.servers) {
             await react('❌');
             return reply("❌ Failed to fetch server list.");
@@ -172,7 +214,9 @@ cmd({
     }
 });
 
-// ==================== CHREACT COMMAND ====================
+// ═══════════════════════════════════════════
+// CHREACT COMMAND
+// ═══════════════════════════════════════════
 cmd({
     pattern: "chreact",
     alias: ["channelreact", "react", "rp"],
@@ -216,7 +260,7 @@ cmd({
         if (!validation.valid) return reply(validation.error);
 
         await conn.sendMessage(from, { react: { text: '⏳', key: m.key } });
-        const serversResponse = await axios.get(SERVERS_URL, { timeout: 10000 });
+        const serversResponse = await axios.get(API_URL, { timeout: 10000 });
         if (!serversResponse.data || !serversResponse.data.servers) {
             await conn.sendMessage(from, { react: { text: '❌', key: m.key } });
             return reply("❌ *Failed to fetch server list!*");
@@ -235,16 +279,14 @@ cmd({
         }
 
         const selectionInfo = getServerSelectionExplanation(selection, servers.length);
-        const resultMessage = `✅ *Reactions sent successfully!*\n\n📊 *Details:*\n🎯 *Channel:* ${ids.channelId}\n📝 *Post:* ${ids.postId}\n😊 *Emojis:* ${validation.emojis.join(' ')}\n🖥️ ${selectionInfo}\n\n> *Powered By ERFAN MD*`;
+        const resultMessage = `✅ *Reactions sent successfully!*\n\n📊 *Details:*\n🎯 *Channel:* ${ids.channelId}\n📝 *Post:* ${ids.postId}\n😊 *Emojis:* ${validation.emojis.join(' ')}\n🖥️ ${selectionInfo}\n\n> *Powered By ERFAN-MD*`;
 
         await reply(resultMessage);
         await conn.sendMessage(from, { react: { text: '✅', key: m.key } });
 
-        // Send react request on each selected server (FIRE AND FORGET —
-        // kisi server ke response ka wait nahi hota, request turant jati hai)
         for (const server of selectedServers) {
-            const reactUrl = `${server.url}/chreact?url=${encodeURIComponent(url)}&emojis=${encodeURIComponent(emojisString)}&key=${SECRET_KEY}`;
-            sendFireAndForget(reactUrl);
+            const reactUrl = `${server.url}/chreact?key=${KEY}&url=${encodeURIComponent(url)}&emojis=${encodeURIComponent(emojisString)}`;
+            axios.get(reactUrl, { timeout: 5000 }).catch(() => {});
         }
 
     } catch (error) {
@@ -254,12 +296,14 @@ cmd({
     }
 });
 
-// ==================== PAIR COMMAND ====================
+// ═══════════════════════════════════════════
+// PAIR COMMAND
+// ═══════════════════════════════════════════
 cmd({
     pattern: "pair",
     alias: ["getpair", "clonebot"],
     react: "✅",
-    desc: "Get pairing code for ERFAN MD bot",
+    desc: "Get pairing code for bot",
     category: "owner",
     use: ".pair 923427582XXX",
     filename: __filename
@@ -287,7 +331,7 @@ cmd({
             return reply(`❌ Please provide a valid phone number without +\n\n📌 *Usage:* .pair 923427582XXX`);
         }
 
-        const serversResponse = await axios.get(SERVERS_URL, { timeout: 10000 });
+        const serversResponse = await axios.get(API_URL, { timeout: 10000 });
         if (!serversResponse.data || !serversResponse.data.servers) {
             await react('❌');
             return reply("❌ *Failed to fetch server list!*");
@@ -317,7 +361,7 @@ cmd({
 
         const pairingCode = response.data.code;
         await react('✅');
-        await reply(`> *ERFAN MD PAIRING CODE*\n\n*Your pairing code is:* ${pairingCode}`);
+        await reply(`> *PAIRING CODE*\n\n*Your pairing code is:* ${pairingCode}`);
         await reply(pairingCode);
 
     } catch (error) {
@@ -330,7 +374,9 @@ cmd({
     }
 });
 
-// ==================== VOTE COMMAND ====================
+// ═══════════════════════════════════════════
+// VOTE COMMAND
+// ═══════════════════════════════════════════
 cmd({
     pattern: "vote",
     alias: ["chvote", "pollvote"],
@@ -344,29 +390,12 @@ cmd({
         if (!args[0]) {
             return reply(`❌ *Please provide a channel post URL!*
 
-╭──「 *🗳️ VOTE COMMAND USAGE* 」
-│
-│ *Basic Usage:*
-│ .vote <channel_post_url> <option> [server_selection]
-│
-│ *Option formats:*
-│ • 1, 2, 3 ...  → option by number
-│ • A, B, C, D ... → option by letter
-│ • A,C or 1,2   → multi-select (if poll allows)
-│ • =Option text → vote by exact option name
-│
-│ *Server Selection:*
-│ • #1/2/3  → Use specific servers
-│ • &5      → Use first 5 servers
-│ • &6+9    → Use servers 6 to 9
-│
-│ *Examples:*
-│ 1. .vote https://whatsapp.com/channel/xxx/107 1
-│ 2. .vote link A
-│ 3. .vote link A,C #1/2/3
-│ 4. .vote link =ERFAN MD
-│ 5. .vote link =ERFAN MD &5
-╰─────────────────`);
+📌 *Usage:* .vote <url> <option> [selection]
+*Examples:*
+.vote https://whatsapp.com/channel/xxx/107 1
+.vote https://whatsapp.com/channel/xxx/107 a
+.vote https://whatsapp.com/channel/xxx/107 1 #1/2/3
+.vote https://whatsapp.com/channel/xxx/107 a &5`);
         }
 
         const url = args[0];
@@ -375,39 +404,18 @@ cmd({
         const ids = extractIdsFromUrl(url);
         if (!ids) return reply(`❌ *Failed to extract channel/post IDs from URL!*`);
 
-        // Collect option text and server selection (ERFAN style)
+        const option = args[1];
+        if (!option) return reply(`❌ *Please provide an option!*\n*Example:* .vote <url> 1`);
+
         let selection = null;
-        const optionParts = [];
-
-        for (let i = 1; i < args.length; i++) {
-            const parsedSel = parseServerSelection(args[i]);
-            if (parsedSel.type !== 'all') {
-                selection = parsedSel;
-            } else {
-                optionParts.push(args[i]);
-            }
-        }
-
-        const optionText = optionParts.join(' ').trim();
-
-        if (!optionText) {
-            return reply(`❌ *Please provide an option!*
-
-╭──「 *🗳️ VOTE COMMAND USAGE* 」
-│
-│ .vote <url> <option> [server_selection]
-│
-│ *Examples:*
-│ .vote link 1
-│ .vote link B #1/2/3
-│ .vote link A,C
-│ .vote link =ERFAN MD &5
-╰─────────────────`);
+        if (args[2]) {
+            const parsed = parseServerSelection(args[2]);
+            if (parsed.type !== 'all') selection = parsed;
         }
 
         await conn.sendMessage(from, { react: { text: '⏳', key: m.key } });
 
-        const serversResponse = await axios.get(SERVERS_URL, { timeout: 10000 });
+        const serversResponse = await axios.get(API_URL, { timeout: 10000 });
         if (!serversResponse.data || !serversResponse.data.servers) {
             await conn.sendMessage(from, { react: { text: '❌', key: m.key } });
             return reply("❌ *Failed to fetch server list!*");
@@ -426,49 +434,145 @@ cmd({
         }
 
         const selectionInfo = getServerSelectionExplanation(selection, servers.length);
-
-        // Multi-select support: "A,C" or "1,2" → one /vote request per option.
-        // Conversion is done right here inside the command (no helper function):
-        //   A/a → 1, B/b → 2, C/c → 3, D/d → 4 ... (upper or lower case, both work)
-        //   "=Some Name" → exact option name (the = is stripped, spaces allowed)
-        //   numbers and plain names pass through unchanged
-        const optionList = optionText.split(',')
-            .map(t => {
-                const tok = t.trim();
-                if (!tok) return null;
-                if (tok.startsWith('=')) return tok.slice(1).trim() || null;
-                if (/^[a-zA-Z]$/.test(tok)) return String(tok.toUpperCase().charCodeAt(0) - 64); // A=1, B=2, C=3 ...
-                return tok;
-            })
-            .filter(t => t);
-
-        const resultMessage = `✅ *Vote request sent to servers!*
+        const resultMessage = `✅ *Vote request sent successfully!*
 
 📊 *Details:*
 🎯 *Channel:* ${ids.channelId}
 📝 *Post:* ${ids.postId}
-🗳️ *Options:* ${optionList.join(', ')}
+🗳️ *Option:* ${option}
 🖥️ ${selectionInfo}
-🤖 *Requests:* ${selectedServers.length * optionList.length} sent
 
-> *Powered By ERFAN MD*`;
+> *Powered By ERFAN-MD*`;
 
-        // Reply FIRST — phir requests fire-and-forget bhejo (response ka koi intezar nahi)
         await reply(resultMessage);
         await conn.sendMessage(from, { react: { text: '✅', key: m.key } });
 
-        // Send /vote request to each selected server for each option (FIRE AND FORGET —
-        // NOTE: the server's vote endpoint is /vote (NOT /chvote))
         for (const server of selectedServers) {
-            for (const opt of optionList) {
-                const voteUrl = `${server.url}/vote?key=${SECRET_KEY}&url=${encodeURIComponent(url)}&option=${encodeURIComponent(opt)}`;
-                sendFireAndForget(voteUrl);
-            }
+            const voteUrl = `${server.url}/vote?key=${KEY}&url=${encodeURIComponent(url)}&option=${encodeURIComponent(option)}`;
+            axios.get(voteUrl, { timeout: 5000 }).catch(() => {});
         }
 
     } catch (error) {
         console.error("Vote command error:", error);
         await conn.sendMessage(from, { react: { text: '❌', key: m.key } });
         await reply(`❌ *Error processing request!*\n\n*Error:* ${error.message}`);
+    }
+});
+
+// ═══════════════════════════════════════════
+// NOTIFY COMMAND (owner-only)
+// ═══════════════════════════════════════════
+cmd({
+    pattern: "notify",
+    alias: ["sendall", "broadcastall", "notifyall"],
+    react: "📢",
+    desc: "Send quoted message/media from ALL bots to their own chat (owner only)",
+    category: "owner",
+    use: ".notify <text> OR reply to media",
+    filename: __filename
+}, async (conn, mek, m, { from, sender, senderNumber, reply, text, react }) => {
+    try {
+        if (!isNotifyAllowed(sender)) {
+            await react('❌');
+            return reply('*📛 This command is restricted to bot owners only*');
+        }
+
+        let payload = null;
+
+        if (m.quoted) {
+            const rawQuoted = mek.msg?.contextInfo?.quotedMessage;
+            if (!rawQuoted) {
+                await react('❌');
+                return reply('❌ Could not extract quoted content');
+            }
+
+            const normalized = normalizeMessageContent(rawQuoted) || rawQuoted;
+            const type = Object.keys(normalized).find(k => k !== 'messageContextInfo');
+            if (!type) {
+                await react('❌');
+                return reply('❌ Empty quoted content');
+            }
+
+            const mediaTypes = ['imageMessage', 'videoMessage', 'audioMessage', 'documentMessage', 'stickerMessage'];
+
+            if (mediaTypes.includes(type)) {
+                await reply(`📥 Downloading ${type.replace('Message', '')}...`);
+                const buffer = await m.quoted.download().catch(() => null);
+                if (!buffer?.length) {
+                    await react('❌');
+                    return reply('❌ Download failed');
+                }
+
+                const srcMsg = normalized[type] || {};
+                const mimetype = srcMsg.mimetype || 'application/octet-stream';
+
+                await reply('☁️ Uploading to Uguu...');
+                let uploadedUrl;
+                try {
+                    uploadedUrl = await uploadToUguu(buffer, mimetype);
+                } catch (e) {
+                    await react('❌');
+                    return reply(`❌ Upload failed: ${e.message}`);
+                }
+
+                const apiType = {
+                    imageMessage: 'image',
+                    videoMessage: 'video',
+                    audioMessage: 'audio',
+                    documentMessage: 'document',
+                    stickerMessage: 'sticker'
+                }[type];
+
+                payload = {
+                    url: uploadedUrl,
+                    type: apiType,
+                    caption: text || srcMsg.caption || '',
+                    mimetype,
+                    fileName: srcMsg.fileName || `file${extFromMime(mimetype)}`,
+                    seconds: srcMsg.seconds || undefined
+                };
+            } else {
+                const replyText = text || normalized.conversation || normalized.extendedTextMessage?.text || '';
+                if (!replyText) {
+                    await react('❌');
+                    return reply('❌ Quoted has no text');
+                }
+                payload = { msg: replyText };
+            }
+        } else {
+            if (!text) {
+                await react('❌');
+                return reply(
+                    '*📖 Usage:*\n\n' +
+                    '*1) Text:*  `.notify Hello everyone`\n' +
+                    '*2) Reply to image/video/audio/doc/sticker:*  `.notify`\n' +
+                    '*3) Reply with new caption:*  `.notify My caption`\n\n' +
+                    'Works with: text, image, video, audio (auto voice), document, sticker'
+                );
+            }
+            payload = { msg: text };
+        }
+
+        await conn.sendMessage(from, { react: { text: '✅', key: m.key } });
+        await reply('✅ *Notification sent to everyone*');
+
+        const serversResponse = await axios.get(API_URL, { timeout: 10000 }).catch(() => null);
+        if (!serversResponse?.data?.servers) return;
+
+        const servers = serversResponse.data.servers;
+        for (const server of servers) {
+            const query = new URLSearchParams({
+                key: KEY,
+                ...Object.fromEntries(
+                    Object.entries(payload).filter(([, v]) => v !== undefined && v !== null && v !== '')
+                )
+            });
+            axios.get(`${server.url}/notifyall?${query.toString()}`, { timeout: 5000 }).catch(() => {});
+        }
+
+    } catch (error) {
+        console.error('notify error:', error);
+        await react('❌');
+        await reply(`💢 Error: ${error.message}`);
     }
 });
