@@ -1,4 +1,3 @@
-
 import { cmd } from '../command.js';
 import { downloadContentFromMessage } from '@whiskeysockets/baileys';
 
@@ -61,39 +60,30 @@ cmd({
         const raw = getQuotedRaw(message);
         const inner = unwrap(raw);
         const mtype = inner && Object.keys(inner).find(k => MEDIA[k]);
-
-        // Fallback to the old path if we could not read the raw message
-        if (!mtype) {
-            if (!raw) {
-                const buffer = await message.quoted.download();
-                const t = message.quoted.mtype;
-                let content;
-                if (t === 'imageMessage') content = { image: buffer, caption: message.quoted.text || '', mimetype: 'image/jpeg' };
-                else if (t === 'videoMessage') content = { video: buffer, caption: message.quoted.text || '', mimetype: 'video/mp4' };
-                else if (t === 'audioMessage') content = { audio: buffer, mimetype: 'audio/mp4', ptt: message.quoted.ptt || false };
-                else return;
-                return await client.sendMessage(message.sender, content, { quoted: message });
-            }
-            return; // quoted message is not image/video/audio
-        }
+        if (!mtype) return; // replied message is not image/video/audio
 
         const media = inner[mtype];
         const info = MEDIA[mtype];
 
-        let buffer;
+        // DEBUG: shows what WhatsApp actually delivered. If these are all false,
+        // the server stripped the media and no code can download it.
+        console.log('[anti-once]', mtype, {
+            hasMediaKey: !!media.mediaKey?.length,
+            hasDirectPath: !!media.directPath,
+            hasUrl: !!media.url,
+            viewOnce: !!media.viewOnce,
+        });
+
+        let buffer = null;
         try {
             buffer = await streamToBuffer(await downloadContentFromMessage(media, info.type));
         } catch (e) {
-            buffer = null;
-        }
-        if (!buffer?.length) {
-            try { buffer = await message.quoted.download(); } catch { buffer = null; }
+            console.log('[anti-once] download failed:', e?.message);
         }
 
         if (!buffer?.length) {
-            // WhatsApp's server did not deliver the media to this linked device
             return await client.sendMessage(message.sender, {
-                text: 'View-once media was not delivered to this device (WhatsApp server removed it). Try pairing as Android: browser: Browsers.android("13"), then re-pair.',
+                text: 'View-once media was not delivered to this device. Check the [anti-once] line in the console: if hasMediaKey/hasDirectPath are false, WhatsApp removed the media before it reached the bot.',
             }, { quoted: message });
         }
 
