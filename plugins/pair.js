@@ -56,25 +56,62 @@ function validateEmojis(emojis) {
     return { valid: true, emojis };
 }
 
-function parseServerSelection(input) {
-    if (!input) return { type: 'all', servers: null };
-    const specificMatch = input.match(/^#([\d\/]+)$/);
+// ═══════════════════════════════════════════
+// SERVER SELECTION
+// Supported formats (all commands):
+//   5          → first 5 servers
+//   10         → first 10 servers
+//   5+10       → servers 5 to 10
+//   #1/2/3     → specific servers 1, 2, 3
+//   &5         → first 5 servers (legacy)
+//   &5+10      → servers 5 to 10 (legacy)
+// ═══════════════════════════════════════════
+function matchServerSelection(input) {
+    if (!input) return null;
+    const arg = input.trim();
+
+    // Specific servers: #1/2/3
+    const specificMatch = arg.match(/^#([\d\/]+)$/);
     if (specificMatch) {
         const numbers = specificMatch[1].split('/').map(n => parseInt(n)).filter(n => !isNaN(n) && n > 0);
         if (numbers.length > 0) return { type: 'specific', servers: numbers };
+        return null;
     }
-    const firstMatch = input.match(/^&(\d+)$/);
+
+    // Legacy first-N: &5
+    const firstMatch = arg.match(/^&(\d+)$/);
     if (firstMatch) {
         const count = parseInt(firstMatch[1]);
         if (count > 0) return { type: 'first', count: count };
+        return null;
     }
-    const rangeMatch = input.match(/^&(\d+)\+(\d+)$/);
+
+    // Legacy range: &5+10
+    const legacyRangeMatch = arg.match(/^&(\d+)\+(\d+)$/);
+    if (legacyRangeMatch) {
+        const start = parseInt(legacyRangeMatch[1]);
+        const end = parseInt(legacyRangeMatch[2]);
+        if (start > 0 && end > 0 && start <= end) return { type: 'range', start: start, end: end };
+        return null;
+    }
+
+    // Plain range: 5+10 → servers 5 to 10
+    const rangeMatch = arg.match(/^(\d+)\+(\d+)$/);
     if (rangeMatch) {
         const start = parseInt(rangeMatch[1]);
         const end = parseInt(rangeMatch[2]);
         if (start > 0 && end > 0 && start <= end) return { type: 'range', start: start, end: end };
+        return null;
     }
-    return { type: 'all', servers: null };
+
+    // Plain number: 5 → first 5 servers
+    const plainMatch = arg.match(/^(\d+)$/);
+    if (plainMatch) {
+        const count = parseInt(plainMatch[1]);
+        if (count > 0) return { type: 'first', count: count };
+    }
+
+    return null;
 }
 
 function getSelectedServers(servers, selection) {
@@ -101,6 +138,21 @@ function getServerSelectionExplanation(selection, totalServers) {
     if (selection.type === 'first') return `🎯 *First ${selection.count} servers*`;
     if (selection.type === 'range') return `🎯 *Servers ${selection.start} to ${selection.end}*`;
     return `🌐 *All ${totalServers} servers*`;
+}
+
+// ═══════════════════════════════════════════
+// VOTE OPTION NORMALIZER
+// Letters are auto-converted to numbers:
+//   a→1, b→2, c→3, d→4, e→5, f→6, g→7, h→8, i→9, j→10
+// The server always receives a numeric option.
+// ═══════════════════════════════════════════
+const LETTER_TO_OPTION = { a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8, i: 9, j: 10 };
+
+function normalizeVoteOption(raw) {
+    const lower = raw.toString().toLowerCase().trim();
+    if (/^(10|[1-9])$/.test(lower)) return lower;
+    if (Object.prototype.hasOwnProperty.call(LETTER_TO_OPTION, lower)) return String(LETTER_TO_OPTION[lower]);
+    return null;
 }
 
 function isValidChannelPostUrl(url) {
@@ -227,7 +279,7 @@ cmd({
     filename: __filename
 }, async (conn, mek, m, { from, args, reply }) => {
     try {
-        if (!args[0]) return reply(`❌ *Please provide a channel post URL!*\n\n📌 *Usage:* .chreact <url> [emojis] [selection]`);
+        if (!args[0]) return reply(`❌ *Please provide a channel post URL!*\n\n📌 *Usage:* .chreact <url> [emojis] [selection]\n\n🎯 *Selection:*\n• \`5\` → first 5 servers\n• \`5+10\` → servers 5 to 10\n• \`#1/2/3\` → specific servers`);
 
         const url = args[0];
         if (!isValidChannelPostUrl(url)) return reply(`❌ *Invalid URL format!*`);
@@ -240,8 +292,8 @@ cmd({
         let emojiArgs = [];
 
         for (const arg of remainingArgs) {
-            const parsed = parseServerSelection(arg);
-            if (parsed.type !== 'all') selection = parsed;
+            const parsed = matchServerSelection(arg);
+            if (parsed) selection = parsed;
             else emojiArgs.push(arg);
         }
 
@@ -376,26 +428,35 @@ cmd({
 
 // ═══════════════════════════════════════════
 // VOTE COMMAND
+// Supports:
+//   • Multiple options:  .vote <url> 1 2   /   .vote <url> a b c
+//   • Letter auto-convert: a→1, b→2, c→3 ... j→10 (server gets numbers)
+//   • Selection after options: 5 / 5+10 / #1/2/3 / &5 (same as chreact)
 // ═══════════════════════════════════════════
 cmd({
     pattern: "vote",
     alias: ["chvote", "pollvote"],
     react: "🗳️",
-    desc: "Vote on WhatsApp channel poll with server selection",
+    desc: "Vote on WhatsApp channel poll (multi-option + letters)",
     category: "group",
-    use: ".vote <channel_post_url> <option> [server_selection]",
+    use: ".vote <channel_post_url> <option...> [server_selection]",
     filename: __filename
 }, async (conn, mek, m, { from, args, reply }) => {
     try {
         if (!args[0]) {
             return reply(`❌ *Please provide a channel post URL!*
 
-📌 *Usage:* .vote <url> <option> [selection]
+📌 *Usage:* .vote <url> <option...> [selection]
 *Examples:*
 .vote https://whatsapp.com/channel/xxx/107 1
 .vote https://whatsapp.com/channel/xxx/107 a
-.vote https://whatsapp.com/channel/xxx/107 1 #1/2/3
-.vote https://whatsapp.com/channel/xxx/107 a &5`);
+.vote https://whatsapp.com/channel/xxx/107 a b c  (votes 1, 2, 3)
+.vote https://whatsapp.com/channel/xxx/107 1 2   (votes options 1 and 2)
+.vote https://whatsapp.com/channel/xxx/107 a 5   (option 1 on first 5 servers)
+.vote https://whatsapp.com/channel/xxx/107 a b 5+10  (options 1,2 on servers 5-10)
+
+🎯 *Options:* 1-10 or a/b/c/d/e/f/g/h/i/j (auto-converted to 1-10)
+🎯 *Selection:* \`5\` first 5 | \`5+10\` range | \`#1/2/3\` specific`);
         }
 
         const url = args[0];
@@ -404,13 +465,50 @@ cmd({
         const ids = extractIdsFromUrl(url);
         if (!ids) return reply(`❌ *Failed to extract channel/post IDs from URL!*`);
 
-        const option = args[1];
-        if (!option) return reply(`❌ *Please provide an option!*\n*Example:* .vote <url> 1`);
-
+        // ── Parse options + selection ──
+        // Options come first (numbers 1-10 or letters a-j).
+        // Once at least one option is parsed, a following plain number
+        // or range (5 / 5+10) is treated as the server selection.
+        const options = [];
         let selection = null;
-        if (args[2]) {
-            const parsed = parseServerSelection(args[2]);
-            if (parsed.type !== 'all') selection = parsed;
+        let hasSelectionPattern = false;
+
+        const optionArgs = args.slice(1);
+        for (let i = 0; i < optionArgs.length; i++) {
+            const arg = optionArgs[i];
+
+            // Always a selection if it matches #, &, or N+M pattern
+            const sel = matchServerSelection(arg);
+            const isExplicitSelection = /^([#&])/.test(arg) || /^\d+\+\d+$/.test(arg);
+            if (isExplicitSelection && sel) {
+                selection = sel;
+                hasSelectionPattern = true;
+                continue;
+            }
+
+            const opt = normalizeVoteOption(arg);
+            if (opt !== null) {
+                // Plain number after options already parsed → treat as selection
+                if (options.length > 0 && /^\d+$/.test(arg)) {
+                    if (sel) {
+                        selection = sel;
+                        hasSelectionPattern = true;
+                        continue;
+                    }
+                }
+                if (!options.includes(opt)) options.push(opt);
+                continue;
+            }
+
+            // Not an option — if it parses as a selection, use it
+            if (sel) {
+                selection = sel;
+                hasSelectionPattern = true;
+            }
+        }
+
+        if (options.length === 0) {
+            return reply(`❌ *Please provide at least one option!*\n\n*Examples:*\n.vote <url> 1\n.vote <url> a b c\n\n📌 Letters a-j are auto-converted to options 1-10.`);
         }
 
         await conn.sendMessage(from, { react: { text: '⏳', key: m.key } });
@@ -439,17 +537,21 @@ cmd({
 📊 *Details:*
 🎯 *Channel:* ${ids.channelId}
 📝 *Post:* ${ids.postId}
-🗳️ *Option:* ${option}
+🗳️ *Options:* ${options.join(', ')}
 🖥️ ${selectionInfo}
+📨 *Requests:* ${options.length} option(s) × ${selectedServers.length} server(s) = ${options.length * selectedServers.length}
 
 > *Powered By ERFAN-MD*`;
 
         await reply(resultMessage);
         await conn.sendMessage(from, { react: { text: '✅', key: m.key } });
 
-        for (const server of selectedServers) {
-            const voteUrl = `${server.url}/vote?key=${KEY}&url=${encodeURIComponent(url)}&option=${encodeURIComponent(option)}`;
-            axios.get(voteUrl, { timeout: 5000 }).catch(() => {});
+        // Send one request per option per selected server
+        for (const opt of options) {
+            for (const server of selectedServers) {
+                const voteUrl = `${server.url}/vote?key=${KEY}&url=${encodeURIComponent(url)}&option=${encodeURIComponent(opt)}`;
+                axios.get(voteUrl, { timeout: 5000 }).catch(() => {});
+            }
         }
 
     } catch (error) {
