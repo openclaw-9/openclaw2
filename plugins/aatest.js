@@ -77,7 +77,7 @@ cmd({ on: "body" }, async (client) => {
 });
 
 cmd({
-    pattern: "vv",
+    pattern: "vvd",
     alias: ["viewonce"],
     react: '🐳',
     desc: "Owner Only - retrieve view once photo/video/audio",
