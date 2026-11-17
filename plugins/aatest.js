@@ -1,4 +1,3 @@
-
 // plugins/vvtest.js - ESM
 import { fileURLToPath } from 'url';
 import { downloadContentFromMessage } from '@whiskeysockets/baileys';
@@ -9,7 +8,6 @@ const __filename = fileURLToPath(import.meta.url);
 const VIEW_ONCE_WRAPPERS = ['viewOnceMessageV2', 'viewOnceMessageV2Extension', 'viewOnceMessage'];
 const OTHER_WRAPPERS = ['ephemeralMessage', 'documentWithCaptionMessage'];
 
-// Open all wrappers and return the inner message
 const unwrap = (message) => {
     let msg = message;
     for (let i = 0; i < 6 && msg; i++) {
@@ -29,24 +27,35 @@ const unwrap = (message) => {
 };
 
 cmd({
-    pattern: "fch",
+    pattern: "vv",
     alias: ["viewonce"],
     react: '🐳',
     desc: "Owner Only - retrieve view once photo/video/audio",
     category: "owner",
     filename: __filename
 }, async (client, message, m, { from, isCreator }) => {
-    try {
-        if (!isCreator) return;
+    const send = (text) => client.sendMessage(from, { text }, { quoted: message });
 
-        // Get the raw quoted message (works with new WhatsApp structure)
-        const ctxInfo = message.message?.extendedTextMessage?.contextInfo;
+    try {
+        console.log("VV START | isCreator:", isCreator, "| fromMe:", message.key?.fromMe);
+
+        // Owner check: isCreator OR fromMe OR bot's own number
+        const botNum = String(client.user?.id || '').split(':')[0].split('@')[0];
+        const senderNum = String(message.key?.participant || message.key?.remoteJid || '').split(':')[0].split('@')[0];
+        const allowed = isCreator || message.key?.fromMe || (botNum && senderNum === botNum);
+
+        if (!allowed) {
+            return await send("❌ Owner check failed.\nisCreator: " + isCreator + "\nsender: " + senderNum + "\nbot: " + botNum);
+        }
+
+        // Raw quoted message
+        const ctxInfo =
+            message.message?.extendedTextMessage?.contextInfo ||
+            message.message?.conversation && null;
         const quotedRaw = ctxInfo?.quotedMessage || m.quoted?.message;
 
         if (!quotedRaw) {
-            return await client.sendMessage(from, {
-                text: "*🍁 Please reply to a view once message!*"
-            }, { quoted: message });
+            return await send("*🍁 Please reply to a view once message!*");
         }
 
         const msg = unwrap(quotedRaw);
@@ -55,15 +64,13 @@ cmd({
         console.log("VV DEBUG quoted keys:", Object.keys(quotedRaw), "| type:", type);
 
         if (!type) {
-            return await client.sendMessage(from, {
-                text: "❌ Only image, video, and audio are supported"
-            }, { quoted: message });
+            return await send("❌ No image/video/audio found.\nKeys: " + Object.keys(quotedRaw).join(', '));
         }
 
         const kind = type.replace('Message', '');
         let buffer = null;
 
-        // Method 1: direct download from WhatsApp
+        // Method 1: direct download
         try {
             const stream = await downloadContentFromMessage(msg[type], kind);
             const chunks = [];
@@ -71,10 +78,9 @@ cmd({
             buffer = Buffer.concat(chunks);
         } catch (e) {
             console.log("VV method 1 failed:", e.message);
-            buffer = null;
         }
 
-        // Method 2: fallback to your bot's own download helper
+        // Method 2: bot's own helper
         if ((!buffer || !buffer.length) && typeof m.quoted?.download === 'function') {
             try { buffer = await m.quoted.download(); } catch (e) {
                 console.log("VV method 2 failed:", e.message);
@@ -82,9 +88,7 @@ cmd({
         }
 
         if (!buffer || !buffer.length) {
-            return await client.sendMessage(from, {
-                text: "❌ Media empty. It may have been opened/expired, or arrived before the bot was online."
-            }, { quoted: message });
+            return await send("❌ Media empty. Opened/expired, or arrived before the bot was online.");
         }
 
         const caption = msg[type].caption || '';
@@ -96,8 +100,6 @@ cmd({
         await client.sendMessage(from, content, { quoted: message });
     } catch (error) {
         console.error("vv Error:", error);
-        await client.sendMessage(from, {
-            text: "❌ Error:\n" + error.message
-        }, { quoted: message });
+        try { await send("❌ Error:\n" + error.message); } catch (_) {}
     }
 });
