@@ -27,7 +27,7 @@ const unwrap = (message) => {
 };
 
 cmd({
-    pattern: "vv",
+    pattern: "vvx",
     alias: ["viewonce"],
     react: '🐳',
     desc: "Owner Only - retrieve view once photo/video/audio",
