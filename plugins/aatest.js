@@ -8,12 +8,14 @@ const __filename = fileURLToPath(import.meta.url);
 const VIEW_ONCE_WRAPPERS = ['viewOnceMessageV2', 'viewOnceMessageV2Extension', 'viewOnceMessage'];
 const OTHER_WRAPPERS = ['ephemeralMessage', 'documentWithCaptionMessage'];
 
+// Returns inner message and whether it was wrapped as view once
 const unwrap = (message) => {
     let msg = message;
+    let viewOnce = false;
     for (let i = 0; i < 6 && msg; i++) {
         let inner = null;
         for (const k of VIEW_ONCE_WRAPPERS) {
-            if (msg[k]?.message) { inner = msg[k].message; break; }
+            if (msg[k]?.message) { inner = msg[k].message; viewOnce = true; break; }
         }
         if (!inner) {
             for (const k of OTHER_WRAPPERS) {
@@ -23,11 +25,59 @@ const unwrap = (message) => {
         if (!inner) break;
         msg = inner;
     }
-    return msg;
+    return { msg, viewOnce };
 };
 
+const findType = (msg) => Object.keys(msg || {}).find(k => /^(image|video|audio)Message$/.test(k));
+
+// ===== Cache of view once media (id -> data) =====
+const cache = new Map();
+const MAX_CACHE = 50;
+let listenerAttached = false;
+
+const attachListener = (client) => {
+    if (listenerAttached || !client?.ev) return;
+    listenerAttached = true;
+    console.log("VV: cache listener attached");
+
+    client.ev.on('messages.upsert', async ({ messages }) => {
+        for (const mk of messages || []) {
+            try {
+                if (!mk.message || !mk.key?.id) continue;
+                const { msg, viewOnce } = unwrap(mk.message);
+                const type = findType(msg);
+                if (!type) continue;
+                if (!(viewOnce || msg[type]?.viewOnce === true)) continue;
+
+                const kind = type.replace('Message', '');
+                const stream = await downloadContentFromMessage(msg[type], kind);
+                const chunks = [];
+                for await (const chunk of stream) chunks.push(chunk);
+                const buffer = Buffer.concat(chunks);
+                if (!buffer.length) continue;
+
+                cache.set(mk.key.id, {
+                    buffer,
+                    kind,
+                    caption: msg[type].caption || '',
+                    mimetype: msg[type].mimetype || ''
+                });
+                if (cache.size > MAX_CACHE) cache.delete(cache.keys().next().value);
+                console.log("VV: cached view once", mk.key.id, kind, buffer.length);
+            } catch (e) {
+                console.log("VV cache error:", e.message);
+            }
+        }
+    });
+};
+
+// Attach the listener on the first incoming text message
+cmd({ on: "body" }, async (client) => {
+    attachListener(client);
+});
+
 cmd({
-    pattern: "vvx",
+    pattern: "vv",
     alias: ["viewonce"],
     react: '🐳',
     desc: "Owner Only - retrieve view once photo/video/audio",
@@ -37,58 +87,50 @@ cmd({
     const send = (text) => client.sendMessage(from, { text }, { quoted: message });
 
     try {
-        console.log("VV START | isCreator:", isCreator, "| fromMe:", message.key?.fromMe);
+        attachListener(client);
 
-        // Owner check: isCreator OR fromMe OR bot's own number
         const botNum = String(client.user?.id || '').split(':')[0].split('@')[0];
         const senderNum = String(message.key?.participant || message.key?.remoteJid || '').split(':')[0].split('@')[0];
         const allowed = isCreator || message.key?.fromMe || (botNum && senderNum === botNum);
+        if (!allowed) return;
 
-        if (!allowed) {
-            return await send("❌ Owner check failed.\nisCreator: " + isCreator + "\nsender: " + senderNum + "\nbot: " + botNum);
-        }
-
-        // Raw quoted message
-        const ctxInfo =
-            message.message?.extendedTextMessage?.contextInfo ||
-            message.message?.conversation && null;
+        const ctxInfo = message.message?.extendedTextMessage?.contextInfo;
         const quotedRaw = ctxInfo?.quotedMessage || m.quoted?.message;
+        const stanzaId = ctxInfo?.stanzaId || m.quoted?.id;
 
-        if (!quotedRaw) {
-            return await send("*🍁 Please reply to a view once message!*");
+        if (!quotedRaw) return await send("*🍁 Please reply to a view once message!*");
+
+        // Method 1: cache (most reliable)
+        const cached = stanzaId ? cache.get(stanzaId) : null;
+        if (cached) {
+            let content;
+            if (cached.kind === 'image') content = { image: cached.buffer, caption: cached.caption };
+            else if (cached.kind === 'video') content = { video: cached.buffer, caption: cached.caption };
+            else content = { audio: cached.buffer, mimetype: cached.mimetype || "audio/mp4", ptt: false };
+            return await client.sendMessage(from, content, { quoted: message });
         }
 
-        const msg = unwrap(quotedRaw);
-        const type = Object.keys(msg || {}).find(k => /^(image|video|audio)Message$/.test(k));
+        // Method 2: direct download from quoted message
+        const { msg } = unwrap(quotedRaw);
+        const type = findType(msg);
+        console.log("VV DEBUG | stanzaId:", stanzaId, "| quoted keys:", Object.keys(quotedRaw), "| type:", type,
+            "| hasMediaKey:", !!(type && msg[type]?.mediaKey), "| cacheSize:", cache.size);
 
-        console.log("VV DEBUG quoted keys:", Object.keys(quotedRaw), "| type:", type);
-
-        if (!type) {
-            return await send("❌ No image/video/audio found.\nKeys: " + Object.keys(quotedRaw).join(', '));
-        }
+        if (!type) return await send("❌ No image/video/audio found.\nKeys: " + Object.keys(quotedRaw).join(', '));
 
         const kind = type.replace('Message', '');
         let buffer = null;
-
-        // Method 1: direct download
         try {
             const stream = await downloadContentFromMessage(msg[type], kind);
             const chunks = [];
             for await (const chunk of stream) chunks.push(chunk);
             buffer = Buffer.concat(chunks);
         } catch (e) {
-            console.log("VV method 1 failed:", e.message);
-        }
-
-        // Method 2: bot's own helper
-        if ((!buffer || !buffer.length) && typeof m.quoted?.download === 'function') {
-            try { buffer = await m.quoted.download(); } catch (e) {
-                console.log("VV method 2 failed:", e.message);
-            }
+            console.log("VV direct download failed:", e.message);
         }
 
         if (!buffer || !buffer.length) {
-            return await send("❌ Media empty. Opened/expired, or arrived before the bot was online.");
+            return await send("❌ Media empty. Not in cache and direct download failed.\nSend a NEW view once after the bot is online, then try again.");
         }
 
         const caption = msg[type].caption || '';
@@ -96,7 +138,6 @@ cmd({
         if (kind === 'image') content = { image: buffer, caption };
         else if (kind === 'video') content = { video: buffer, caption };
         else content = { audio: buffer, mimetype: msg[type].mimetype || "audio/mp4", ptt: false };
-
         await client.sendMessage(from, content, { quoted: message });
     } catch (error) {
         console.error("vv Error:", error);
