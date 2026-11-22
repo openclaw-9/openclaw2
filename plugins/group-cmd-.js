@@ -3,8 +3,133 @@ import config from '../config.js';
 import { cmd } from '../command.js';
 import { getBuffer, getGroupAdmins, getRandom, h2k, isUrl, Json, runtime, sleep, fetchJson } from '../lib/functions.js';
 import converter from '../lib/converter.js';
+import axios from 'axios';
+import fs from 'fs';
+import path from 'path';
+import { tmpdir } from 'os';
+import { randomBytes } from 'crypto';
+import ffmpeg from 'fluent-ffmpeg';
+import ffmpegPath from '@ffmpeg-installer/ffmpeg';
 
 const __filename = fileURLToPath(import.meta.url);
+ffmpeg.setFfmpegPath(ffmpegPath.path);
+
+// ========== GIF API URLS (same as reaction file) ==========
+const FIRST_API_URL = 'https://nekos.best/api/v2/';
+const SECOND_API_URL = 'https://api.purrbot.site/v2/img/sfw/';
+const THIRD_API_URL = 'https://api.otakugifs.xyz/gif?reaction=';
+const FOURTH_API_URL = 'https://nekos.life/api/v2/img/';
+
+// ========== GET GIF — tries all APIs with same action ==========
+async function getGifX(action) {
+    const sources = [
+        async () => {
+            const r = await axios.get(`${FIRST_API_URL}${action}`);
+            return r.data?.results?.[0]?.url || null;
+        },
+        async () => {
+            const r = await axios.get(`${SECOND_API_URL}${action}/gif`);
+            return (r.data?.error === false && r.data?.link) ? r.data.link : null;
+        },
+        async () => {
+            const r = await axios.get(`${THIRD_API_URL}${action}`);
+            return r.data?.url || null;
+        },
+        async () => {
+            const r = await axios.get(`${FOURTH_API_URL}${action}`);
+            return r.data?.url || null;
+        }
+    ];
+    for (const src of sources) {
+        try {
+            const url = await src();
+            if (url) return url;
+        } catch (_) {}
+    }
+    throw new Error('No reaction GIF source available.');
+}
+
+// ========== GIF → VIDEO ==========
+async function gifToVideo(gifBuffer) {
+    const id = randomBytes(6).toString('hex');
+    const gifPath = path.join(tmpdir(), `${id}.gif`);
+    const mp4Path = path.join(tmpdir(), `${id}.mp4`);
+    fs.writeFileSync(gifPath, gifBuffer);
+    await new Promise((res, rej) => {
+        ffmpeg(gifPath)
+            .outputOptions(['-movflags faststart','-pix_fmt yuv420p','-vf scale=trunc(iw/2)*2:trunc(ih/2)*2'])
+            .on('error', () => rej(new Error('Could not process GIF to video.')))
+            .on('end', res)
+            .save(mp4Path);
+    });
+    const v = fs.readFileSync(mp4Path);
+    fs.unlinkSync(gifPath); fs.unlinkSync(mp4Path);
+    return v;
+}
+
+// ========== GIF ACTION MAP (matched actions, random fallback) ==========
+const GIF_ACTION_MAP = {
+    unmute: 'smile',
+    mute: 'sleep',
+    tagall: 'wave',
+    kick: 'kick',
+    promote: 'clap',
+    demote: 'slap',
+    gcpp: 'smile',
+    revoke: 'shrug',
+    updategdesc: 'wave',
+    updategname: 'smile',
+    out: 'kick',
+    newgc: 'smile',
+    end: 'kick',
+    join: 'hug',
+    invite: 'wave',
+    acceptall: 'hug',
+    accept: 'hug',
+    rejectall: 'shrug',
+    reject: 'shrug',
+    add: 'hug'
+};
+
+const RANDOM_GIF_ACTIONS = ['hug', 'wave', 'slap', 'punch', 'pat', 'poke', 'smile', 'dance', 'kiss', 'cry'];
+
+async function fetchGifUrl(action) {
+    try {
+        return await getGifX(action);
+    } catch (_) {
+        return null;
+    }
+}
+
+// ========== SEND GIF ABOVE + TEXT BELOW (success replies) ==========
+async function sendGifReply(conn, mek, from, commandName, caption, mentions = []) {
+    // First try the matched action for this command
+    let url = await fetchGifUrl(GIF_ACTION_MAP[commandName]);
+
+    // If no good match found, fall back to a random action
+    if (!url) {
+        const rnd = RANDOM_GIF_ACTIONS[Math.floor(Math.random() * RANDOM_GIF_ACTIONS.length)];
+        url = await fetchGifUrl(rnd);
+    }
+
+    if (!url) {
+        // No GIF available at all — just send the text
+        return await conn.sendMessage(from, { text: caption, mentions }, { quoted: mek });
+    }
+
+    try {
+        const gifBuffer = (await axios.get(url, { responseType: 'arraybuffer', timeout: 15000 })).data;
+        const videoBuffer = await gifToVideo(Buffer.from(gifBuffer));
+        await conn.sendMessage(from, { video: videoBuffer, caption, gifPlayback: true, mentions }, { quoted: mek });
+    } catch (e) {
+        console.error('GIF reply failed, sending image instead:', e.message);
+        try {
+            await conn.sendMessage(from, { image: { url }, caption, mentions }, { quoted: mek });
+        } catch (e2) {
+            await conn.sendMessage(from, { text: caption, mentions }, { quoted: mek });
+        }
+    }
+}
 
 // ==================== UNMUTE COMMAND ====================
 cmd({
@@ -37,7 +162,7 @@ cmd({
         if (!isAdmins && !isCreator) return await reply("🔐 Only group admins or owner can use this command.");
 
         await conn.groupSettingUpdate(from, 'not_announcement');
-        await reply("*🔊 Group has been unmuted!* \nEveryone can send messages now.");
+        await sendGifReply(conn, mek, from, "unmute", "*🔊 Group has been unmuted!* \nEveryone can send messages now.");
 
     } catch (err) {
         console.error(err);
@@ -76,7 +201,7 @@ cmd({
         if (!isAdmins && !isCreator) return await reply("🔐 Only group admins or owner can use this command.");
 
         await conn.groupSettingUpdate(from, 'announcement');
-        await reply("*🔇 Group has been muted!* \nOnly admins can send messages now.");
+        await sendGifReply(conn, mek, from, "mute", "*🔇 Group has been muted!* \nOnly admins can send messages now.");
 
     } catch (err) {
         console.error(err);
@@ -143,7 +268,7 @@ cmd({
 
         teks += "└──✪ ERFAN ┃ MD ✪──";
 
-        conn.sendMessage(from, { text: teks, mentions: participants.map(a => a.id) }, { quoted: mek });
+        await sendGifReply(conn, mek, from, "tagall", teks, participants.map(a => a.id));
 
     } catch (e) {
         console.error("TagAll Error:", e);
@@ -192,7 +317,7 @@ cmd({
         if (users === self) return await reply("👑 That's the owner! I can't remove them.");
 
         await conn.groupParticipantsUpdate(from, [users], "remove");
-        await reply(`*✅ Successfully removed from group.*`, { mentions: [users] });
+        await sendGifReply(conn, mek, from, "kick", `*✅ Successfully removed from group.*`, [users]);
 
     } catch (err) {
         console.error(err);
@@ -241,7 +366,7 @@ cmd({
         if (users === self) return await reply("👑 Owner is already super admin!");
 
         await conn.groupParticipantsUpdate(from, [users], "promote");
-        await reply(`*✅ Successfully Promoted to Admin.*`, { mentions: [users] });
+        await sendGifReply(conn, mek, from, "promote", `*✅ Successfully Promoted to Admin.*`, [users]);
 
     } catch (err) {
         console.error(err);
@@ -287,7 +412,7 @@ cmd({
         if (users === self) return await reply("👑 I can't demote the owner!");
 
         await conn.groupParticipantsUpdate(from, [users], "demote");
-        await reply(`*✅ Admin Successfully demoted to a normal member.*`, { mentions: [users] });
+        await sendGifReply(conn, mek, from, "demote", `*✅ Admin Successfully demoted to a normal member.*`, [users]);
 
     } catch (err) {
         console.error(err);
@@ -316,7 +441,7 @@ cmd({
 
         const buffer = await m.quoted.download();
         await conn.updateProfilePicture(from, buffer);
-        await reply("*✅ Group profile picture updated successfully!*");
+        await sendGifReply(conn, mek, from, "gcpp", "*✅ Group profile picture updated successfully!*");
 
     } catch (error) {
         console.error("setgcpp Error:", error);
@@ -339,7 +464,7 @@ cmd({
         if (!isAdmins && !isCreator) return await reply("🔐 Only admins can use this command.");
 
         const newCode = await conn.groupRevokeInvite(from);
-        await reply(`*✅ Link Reset Successful!*\n\n🔗 https://chat.whatsapp.com/${newCode}`);
+        await sendGifReply(conn, mek, from, "revoke", `*✅ Link Reset Successful!*\n\n🔗 https://chat.whatsapp.com/${newCode}`);
 
     } catch (err) {
         console.error(err);
@@ -436,7 +561,7 @@ cmd({
         if (q.length > 500) return await reply("⚠️ Description is too long (max 500 characters).");
 
         await conn.groupUpdateDescription(from, q);
-        await reply("✅ Group description updated successfully!");
+        await sendGifReply(conn, mek, from, "updategdesc", "✅ Group description updated successfully!");
 
     } catch (err) {
         console.error(err);
@@ -463,7 +588,7 @@ cmd({
         if (q.length > 100) return await reply("⚠️ Group name is too long (max 100 characters).");
 
         await conn.groupUpdateSubject(from, q);
-        await reply(`✅ Group name changed to: *${q}*`);
+        await sendGifReply(conn, mek, from, "updategname", `✅ Group name changed to: *${q}*`);
 
     } catch (err) {
         console.error(err);
@@ -546,7 +671,7 @@ cmd({
 
         const jids = targets.map(p => p.id);
         await conn.groupParticipantsUpdate(from, jids, "remove");
-        reply(`✅ Successfully removed ${targets.length} members with country code +${countryCode}`);
+        await sendGifReply(conn, mek, from, "out", `✅ Successfully removed ${targets.length} members with country code +${countryCode}`);
     } catch (error) {
         console.error("Out command error:", error);
         reply("❌ Failed to remove members. Error: " + error.message);
@@ -592,7 +717,7 @@ cmd({
         const inviteLink = `https://chat.whatsapp.com/${inviteCode}`;
 
         await conn.sendMessage(group.id, { text: `🎉 *Welcome to ${groupName}!*\n\nGroup created successfully!\nInvite Link: ${inviteLink}\n\nUse this link to invite more members.` });
-        await reply(`✅ Group created successfully!\n\n📌 *Name:* ${groupName}\n👥 *Members:* ${participantNumbers.length}\n🔗 *Link:* ${inviteLink}`);
+        await sendGifReply(conn, mek, from, "newgc", `✅ Group created successfully!\n\n📌 *Name:* ${groupName}\n👥 *Members:* ${participantNumbers.length}\n🔗 *Link:* ${inviteLink}`);
 
     } catch (err) {
         console.error(err);
@@ -610,12 +735,55 @@ cmd({
     react: "🎉",
     category: "owner",
     filename: __filename
-}, async (conn, mek, m, { from, isGroup, isCreator, reply }) => {
+}, async (conn, mek, m, { from, isGroup, isCreator, sender, reply }) => {
     try {
         if (!isGroup) return reply("❗ This command can only be used in *groups*.");
         if (!isCreator) return reply("❗ This command can only be used by my *owner*.");
 
-        await reply(`👋 *Goodbye everyone!* I am leaving the group now. Thanks for having me here! ❤️`);
+        // Random short goodbye lines (3-4 words, shown randomly each time)
+        const goodbyeLines = [
+            "GC is over! Bye everyone 🥲",
+            "Goodbye, leaving now ✌️",
+            "F*ck it, going offline 🖤",
+            "Bye bye, see you again 👋",
+            "Goodbye everyone 💨",
+            "Alright, I am leaving 🚶",
+            "GC ended, bye all 😔",
+            "I am out, goodbye 🖤",
+            "Leaving now, bye bro ✌️",
+            "Group over, I am gone 😎"
+        ];
+        const goodbye = goodbyeLines[Math.floor(Math.random() * goodbyeLines.length)];
+
+        // Tag all group admins
+        const metadata = await conn.groupMetadata(from);
+        const admins = (metadata.participants || []).filter(p => p.admin).map(p => p.id);
+        const adminTags = admins.length > 0
+            ? admins.map(a => `@${a.split('@')[0]}`).join(' ')
+            : '';
+
+        const senderJid = sender || mek.sender;
+        let sent = false;
+
+        // Show the user's own DP on top
+        try {
+            const ppUrl = await conn.profilePictureUrl(senderJid, 'image');
+            await conn.sendMessage(from, {
+                image: { url: ppUrl },
+                caption: `${goodbye}${adminTags ? `\n\n${adminTags}` : ''}`,
+                mentions: admins
+            }, { quoted: mek });
+            sent = true;
+        } catch (e) {}
+
+        // Fallback if DP couldn't be fetched
+        if (!sent) {
+            await conn.sendMessage(from, {
+                text: `${goodbye}${adminTags ? `\n\n${adminTags}` : ''}`,
+                mentions: admins
+            }, { quoted: mek });
+        }
+
         await sleep(1500);
         await conn.groupLeave(from);
 
@@ -648,7 +816,7 @@ cmd({
         if (jids.length === 0) return await reply("✅ No members to remove (everyone is excluded).");
 
         await conn.groupParticipantsUpdate(from, jids, "remove");
-        await reply(`✅ Successfully removed ${jids.length} member${jids.length > 1 ? 's' : ''} from the group.`);
+        await sendGifReply(conn, mek, from, "end", `✅ Successfully removed ${jids.length} member${jids.length > 1 ? 's' : ''} from the group.`);
 
     } catch (err) {
         console.error(err);
@@ -686,7 +854,7 @@ cmd({
 
         try {
             await conn.groupAcceptInvite(link);
-            await reply("✅ Successfully joined the group!");
+            await sendGifReply(conn, mek, mek.chat, "join", "✅ Successfully joined the group!");
         } catch (err) {
             if (err.message?.includes("already")) await reply("ℹ️ I'm already in this group.");
             else if (err.message?.includes("expired")) await reply("❌ This link has expired or been reset.");
@@ -728,7 +896,7 @@ cmd({
         const link = `https://chat.whatsapp.com/${code}`;
         
         await conn.sendMessage(jid, { text: `📨 *You're invited to join ${metadata.subject}*\n\n🔗 ${link}\n\n👤 Invited by: @${m.sender.split('@')[0]}` });
-        await reply(`📨 Invite sent to @${number}`, { mentions: [jid] });
+        await sendGifReply(conn, mek, from, "invite", `📨 Invite sent to @${number}`, [jid]);
 
     } catch (err) {
         console.error(err);
@@ -880,7 +1048,7 @@ cmd({
 
         const jids = requests.map(u => u.jid);
         await conn.groupRequestParticipantsUpdate(from, jids, "approve");
-        await reply(`✅ Successfully accepted ${requests.length} join request${requests.length > 1 ? 's' : ''}.`);
+        await sendGifReply(conn, mek, from, "acceptall", `✅ Successfully accepted ${requests.length} join request${requests.length > 1 ? 's' : ''}.`);
 
     } catch (err) {
         console.error(err);
@@ -908,7 +1076,7 @@ cmd({
 
         const jids = requests.map(u => u.jid);
         await conn.groupRequestParticipantsUpdate(from, jids, "reject");
-        await reply(`✅ Successfully rejected ${requests.length} join request${requests.length > 1 ? 's' : ''}.`);
+        await sendGifReply(conn, mek, from, "rejectall", `✅ Successfully rejected ${requests.length} join request${requests.length > 1 ? 's' : ''}.`);
 
     } catch (err) {
         console.error(err);
@@ -975,7 +1143,7 @@ cmd({
 
         const user = requests[num - 1].jid;
         await conn.groupRequestParticipantsUpdate(from, [user], "approve");
-        await reply(`✅ Accepted join request #${num} from ${user.replace('@s.whatsapp.net', '')}`);
+        await sendGifReply(conn, mek, from, "accept", `✅ Accepted join request #${num} from ${user.replace('@s.whatsapp.net', '')}`, [user]);
 
     } catch (err) {
         console.error(err);
@@ -1009,7 +1177,7 @@ cmd({
 
         const user = requests[num - 1].jid;
         await conn.groupRequestParticipantsUpdate(from, [user], "reject");
-        await reply(`✅ Rejected join request #${num} from ${user.replace('@s.whatsapp.net', '')}`);
+        await sendGifReply(conn, mek, from, "reject", `✅ Rejected join request #${num} from ${user.replace('@s.whatsapp.net', '')}`, [user]);
 
     } catch (err) {
         console.error(err);
@@ -1048,7 +1216,7 @@ cmd({
         if (!userJid) return await reply("⚠️ Couldn't determine user.");
         
         await conn.groupParticipantsUpdate(from, [userJid], "add");
-        await reply(`✅ Added!`, { mentions: [userJid] });
+        await sendGifReply(conn, mek, from, "add", `*✅ User added to the group successfully!* 👋\n\nWelcome @${userJid.split('@')[0]} 🎉`, [userJid]);
 
     } catch (err) {
         console.error(err);
