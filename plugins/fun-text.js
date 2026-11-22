@@ -1,9 +1,16 @@
-// ERFAN-MD — FUN TEXT COMMANDS (UPDATED v2)
+// ERFAN-MD — FUN TEXT COMMANDS (v3 — GIF EDITION)
 import { fileURLToPath } from 'url';
 import path from 'path';
+import fs from 'fs';
+import { tmpdir } from 'os';
+import { randomBytes } from 'crypto';
+import axios from 'axios';
+import ffmpeg from 'fluent-ffmpeg';
+import ffmpegPath from '@ffmpeg-installer/ffmpeg';
 import { cmd } from '../command.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+ffmpeg.setFfmpegPath(ffmpegPath.path);
 
 // Helper to get bot ID safely
 const getBotId = (conn) => {
@@ -29,10 +36,194 @@ async function pickTarget(conn, mek, m) {
   } catch { return null; }
 }
 
+// ============================================================
+// GIF LAYER (v3):
+// Every fun command now sends a MATCHING GIF (hug / kiss / pat /
+// dance / cry / ...) with its fun text as the caption.
+// - Matched action per command (GIF_ACTION_MAP), random fallback
+// - If the GIF fails for any reason, plain text is sent —
+//   commands never break because of the GIF layer
+// ============================================================
+
+async function getGifX(action) {
+  const sources = [
+    async () => {
+      const r = await axios.get(`https://nekos.best/api/v2/${action}`);
+      return r.data?.results?.[0]?.url || null;
+    },
+    async () => {
+      const r = await axios.get(`https://api.purrbot.site/v2/img/sfw/${action}/gif`);
+      return (r.data?.error === false && r.data?.link) ? r.data.link : null;
+    },
+    async () => {
+      const r = await axios.get(`https://api.otakugifs.xyz/gif?reaction=${action}`);
+      return r.data?.url || null;
+    },
+    async () => {
+      const r = await axios.get(`https://nekos.life/api/v2/img/${action}`);
+      return r.data?.url || null;
+    }
+  ];
+  for (const src of sources) {
+    try {
+      const url = await src();
+      if (url) return url;
+    } catch (_) {}
+  }
+  throw new Error('No reaction GIF source available.');
+}
+
+async function gifToVideo(gifBuffer) {
+  const id = randomBytes(6).toString('hex');
+  const gifPath = path.join(tmpdir(), `${id}.gif`);
+  const mp4Path = path.join(tmpdir(), `${id}.mp4`);
+  fs.writeFileSync(gifPath, gifBuffer);
+  await new Promise((res, rej) => {
+    ffmpeg(gifPath)
+      .outputOptions(['-movflags faststart','-pix_fmt yuv420p','-vf scale=trunc(iw/2)*2:trunc(ih/2)*2'])
+      .on('error', () => rej(new Error('Could not process GIF to video.')))
+      .on('end', res)
+      .save(mp4Path);
+  });
+  const v = fs.readFileSync(mp4Path);
+  fs.unlinkSync(gifPath); fs.unlinkSync(mp4Path);
+  return v;
+}
+
+// Matched GIF action for every command
+const GIF_ACTION_MAP = {
+  ishqmeter: 'kiss', andhaishq: 'hug', lafzmohabbat: 'hug', pehlinazar: 'wink',
+  dillagi: 'poke', khoobsurat: 'smile', dhadkan: 'hug', pehlaakhat: 'hug',
+  ziddidil: 'poke', yaadaata: 'cry', taubatauba: 'cry', pehlamuhabbat: 'hug',
+  wafaimtihaan: 'pat', donokikahani: 'handhold', gulabbhejo: 'kiss', aankhein: 'wink',
+  shayarban: 'smile', dushmandost: 'smug', tangkarna: 'poke', smilechurao: 'smile',
+  jaan: 'kiss', qismatwala: 'handhold', jhoothpyaar: 'smug', siyaanibaat: 'smile',
+  mohabbatqarz: 'hug', nazarutarao: 'pat', romanticbakwaas: 'kiss', aashiqanaaward: 'happy',
+  mohabbatteri: 'hug', dilkhol: 'hug', gussapyaar: 'punch', jasoos: 'stare',
+  tangaphanda: 'hug', muftadvice: 'wave', nakhrebaaz: 'smug', anokhapyaar: 'hug',
+  bhaaggaya: 'wave', khushnaseebi: 'happy', ronewala: 'cry', waqtguzarna: 'poke',
+  chandsa: 'smile', dostyadildar: 'handhold', galatfehmi: 'punch', perfectmatch: 'kiss',
+  raazkhola: 'smug', mohabbatdarjaa: 'kiss', dua: 'pat', khwaabon: 'hug',
+  akela: 'cry', bewafa: 'cry', chakkar: 'hug', ullubana: 'laugh',
+  taalibajao: 'happy', neendurai: 'sleep', chatpata: 'dance', waitingroom: 'wave',
+  taj: 'smile', lafangaa: 'wink', chocolatewala: 'hug', baatkaatna: 'poke',
+  palat: 'wink', gaanasunao: 'dance', haaththamna: 'handhold', chuprahna: 'smug',
+  phoolonkahaar: 'kiss', ghoordekhna: 'stare', bahaana: 'smug', tarkeeb: 'smug',
+  hassichhupa: 'blush', mobileband: 'poke', pagalpancert: 'laugh', wallpaper: 'blush',
+  donobaat: 'wave', kaanpakadna: 'pat', taqdir: 'handhold', kapkapi: 'blush',
+  taarifcommit: 'smile', captioncontest: 'smile', zyadasocha: 'poke', ghazab: 'happy',
+  onlinedekhna: 'stare', dushmankadushman: 'wave', buraanamano: 'poke', mirrormirror: 'smile',
+  merahero: 'happy', natkhat: 'laugh', pareshan: 'cry', interview: 'wave',
+  kheltamam: 'cry', rishtapakka: 'kiss', pyaardukaan: 'hug', zabaansambhlo: 'poke',
+  jhootawada: 'smug', sonawala: 'hug', gossip: 'wave', funnyrishtedar: 'laugh',
+  aankheband: 'pat', alvidanahi: 'hug',
+  personalitytest: 'wave', superpower: 'happy', pastlife: 'wave', darksecret: 'smug',
+  celebmatch: 'happy', lifebattery: 'smile', desimom: 'poke', desidad: 'poke',
+  khanajudge: 'happy', rishtaaunt: 'smug', challenge: 'wave', friendtype: 'wave',
+  pakoraweather: 'happy', result: 'laugh', cricketcomm: 'happy', shadiprediction: 'kiss',
+  stresslevel: 'pat', motivationalslap: 'slap', wikifact: 'wave', animepersonality: 'punch',
+  weathermood: 'dance', taunt: 'smug', gharkawifi: 'poke', lovecalc2: 'kiss',
+  problems: 'cry', hugkr: 'hug', mildroast: 'poke', wisdomcookie: 'smile',
+  monsterenergy: 'dance', socialmedia: 'wave', whatanimal: 'pat', typingspeed: 'wave',
+  nightowl: 'sleep', pizzaorbiryani: 'happy', emotionaldamage: 'cry', complainbox: 'wave',
+  numbergame: 'happy', coinflip: 'wave', naammatlab: 'smile', compliment2: 'smile',
+  examseason: 'cry', pakfact: 'wave', storygenerate: 'wave', botroast: 'laugh',
+  weeklyreport: 'wave', soulcolor: 'smile', shukria: 'hug', desiwisdom: 'wave',
+  kindness: 'hug', newcmds: 'wave',
+  taglafz: 'kiss', filmyentry: 'dance', sachaashiq: 'kiss', dilkebaat: 'hug',
+  pyaarstatus: 'kiss', shipname: 'kiss', aajkadil: 'hug', pyaarshayari: 'kiss',
+  mohabattracker: 'cry', funmenu: 'wave'
+};
+
+const RANDOM_FUN_ACTIONS = ['hug', 'kiss', 'pat', 'cuddle', 'wave', 'smile', 'laugh', 'wink', 'poke', 'blush'];
+
+// Fetch + convert a GIF to WhatsApp video. Returns null on any failure.
+async function fetchFunGif(action) {
+  try {
+    let url = await getGifX(action || RANDOM_FUN_ACTIONS[Math.floor(Math.random() * RANDOM_FUN_ACTIONS.length)]);
+    if (!url) {
+      url = await getGifX(RANDOM_FUN_ACTIONS[Math.floor(Math.random() * RANDOM_FUN_ACTIONS.length)]);
+    }
+    if (!url) return null;
+    const buf = (await axios.get(url, { responseType: 'arraybuffer', timeout: 15000 })).data;
+    return await gifToVideo(Buffer.from(buf));
+  } catch (e) {
+    console.error('[FunGIF]:', e.message);
+    return null;
+  }
+}
+
+// registerCmd wraps cmd() — the first text message a fun command sends
+// is automatically upgraded into a GIF video (text becomes the caption).
+// Error messages (starting with ❌) and huge menus pass through untouched.
+function registerCmd(opts, handler) {
+  cmd(opts, async (conn, mek, m, ctx) => {
+    const originalSend = conn.sendMessage.bind(conn);
+    const originalReply = (ctx && typeof ctx.reply === 'function') ? ctx.reply : null;
+    let gifSent = false;
+
+    const action = GIF_ACTION_MAP[opts.pattern] || null;
+
+    const buildGifContent = async (text, baseContent) => {
+      const video = await fetchFunGif(action);
+      if (!video) return null;
+      const content = { ...(baseContent || {}), video, gifPlayback: true, caption: text };
+      delete content.text;
+      return content;
+    };
+
+    const patchedSend = async (jid, content, sendOpts) => {
+      if (
+        !gifSent && jid === mek.chat && content &&
+        typeof content.text === 'string' && content.text.trim() &&
+        content.text.length < 900 && !content.text.trim().startsWith('❌')
+      ) {
+        gifSent = true;
+        const gifContent = await buildGifContent(content.text, content);
+        if (gifContent) {
+          try {
+            return await originalSend(jid, gifContent, sendOpts);
+          } catch (e) {
+            console.error('[FunGIF send failed, falling back to text]:', e.message);
+          }
+        }
+      }
+      return originalSend(jid, content, sendOpts);
+    };
+
+    // Per-invocation socket view — original conn is never modified globally
+    const wrappedConn = Object.create(conn);
+    wrappedConn.sendMessage = patchedSend;
+
+    if (originalReply && !(ctx && ctx.__funReplyWrapped)) {
+      if (ctx) ctx.__funReplyWrapped = true;
+      ctx.reply = async (text, extra) => {
+        if (
+          !gifSent && typeof text === 'string' && text.trim() &&
+          text.length < 900 && !text.trim().startsWith('❌')
+        ) {
+          gifSent = true;
+          const gifContent = await buildGifContent(text, null);
+          if (gifContent) {
+            try {
+              return await originalSend(mek.chat, gifContent, { quoted: mek });
+            } catch (e) {
+              console.error('[FunGIF reply failed, falling back]:', e.message);
+            }
+          }
+        }
+        return originalReply(text, extra);
+      };
+    }
+
+    return await handler(wrappedConn, mek, m, ctx);
+  });
+}
+
 // ============================================
 // 1. ISHQ METER COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "ishqmeter",
   alias: ["pyaarmeter2", "dildhadkan"],
   desc: "Check how deep your love is",
@@ -63,7 +254,7 @@ cmd({
 // ============================================
 // 2. ANDHA ISHQ COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "andhaishq",
   alias: ["blindlove", "pagalashiq"],
   desc: "Make someone a crazy lover randomly",
@@ -90,7 +281,7 @@ cmd({
 // ============================================
 // 3. LAFZ-E-MOHABBAT COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "lafzmohabbat",
   alias: ["romanticlafz", "dilletter"],
   desc: "Express in romantic Urdu words",
@@ -117,7 +308,7 @@ cmd({
 // ============================================
 // 4. PEHLI NAZAR COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "pehlinazar",
   alias: ["firstlove", "najarwala"],
   desc: "Reveal first sight love story",
@@ -144,7 +335,7 @@ cmd({
 // ============================================
 // 5. DILLAGI COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "dillagi",
   alias: ["mazaak", "chherhna"],
   desc: "Flirt with someone in group",
@@ -171,7 +362,7 @@ cmd({
 // ============================================
 // 6. KHOOBSURAT COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "khoobsurat",
   alias: ["sundar", "gorgeous", "haseen"],
   desc: "Praise someone's beauty",
@@ -199,7 +390,7 @@ cmd({
 // ============================================
 // 7. DHADKAN COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "dhadkan",
   alias: ["heartbeat", "dilkidhadkan"],
   desc: "Check heartbeat level",
@@ -223,7 +414,7 @@ cmd({
 // ============================================
 // 8. MOHABBAT KA PEHLA KHAT COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "pehlaakhat",
   alias: ["loveletter", "dilletter2"],
   desc: "Write first romantic letter",
@@ -250,7 +441,7 @@ cmd({
 // ============================================
 // 9. ZIDDI DIL COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "ziddidil",
   alias: ["manmaani", "nakhre"],
   desc: "Show stubborn heart behavior",
@@ -277,7 +468,7 @@ cmd({
 // ============================================
 // 10. YAAD AATA HAI COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "yaadaata",
   alias: ["missing", "miss"],
   desc: "Express missing someone dramatically",
@@ -304,7 +495,7 @@ cmd({
 // ============================================
 // 11. TAUBA TAUBA COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "taubatauba",
   alias: ["chhorhdo", "bazdone"],
   desc: "Failed attempt to quit love",
@@ -326,7 +517,7 @@ cmd({
 // ============================================
 // 12. PEHLI MUHABBAT COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "pehlamuhabbat",
   alias: ["firstcrush", "bachpankipyaar"],
   desc: "Reveal first love in group",
@@ -348,7 +539,7 @@ cmd({
 // ============================================
 // 13. WAFA KA IMTIHAAN COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "wafaimtihaan",
   alias: ["loyaltytest", "wafadar"],
   desc: "Test loyalty in group",
@@ -373,7 +564,7 @@ cmd({
 // ============================================
 // 14. DONO KI KAHANI COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "donokikahani",
   alias: ["lovestory", "ishqkissah"],
   desc: "Create love story for two people",
@@ -400,7 +591,7 @@ cmd({
 // ============================================
 // 15. GULAB BHEJO COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "gulabbhejo",
   alias: ["sendrose", "phoolbhejo"],
   desc: "Send virtual rose to someone",
@@ -427,7 +618,7 @@ cmd({
 // ============================================
 // 16. AANKHEIN COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "aankhein",
   alias: ["eyes", "nigaah"],
   desc: "Praise someone's eyes",
@@ -455,7 +646,7 @@ cmd({
 // ============================================
 // 17. SHAYAR BAN COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "shayarban",
   alias: ["poem", "sher"],
   desc: "Recite poetry for someone",
@@ -482,7 +673,7 @@ cmd({
 // ============================================
 // 18. DUSHMAN DOST COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "dushmandost",
   alias: ["frenemies", "durhabeeb"],
   desc: "Find out if enemy or friend",
@@ -510,7 +701,7 @@ cmd({
 // ============================================
 // 19. TANG KARNA COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "tangkarna",
   alias: ["chidana", "pareshan"],
   desc: "Lovingly annoy someone",
@@ -537,7 +728,7 @@ cmd({
 // ============================================
 // 20. SMILE CHURAO COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "smilechurao",
   alias: ["muskaan", "hasao"],
   desc: "Steal someone's smile lovingly",
@@ -564,7 +755,7 @@ cmd({
 // ============================================
 // 21. JAAN COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "jaan",
   alias: ["jaanu", "sweetheart"],
   desc: "Call someone sweetheart lovingly",
@@ -586,7 +777,7 @@ cmd({
 // ============================================
 // 22. QISMAT WALA COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "qismatwala",
   alias: ["lucky", "naseeb"],
   desc: "Check who's in your destiny",
@@ -608,7 +799,7 @@ cmd({
 // ============================================
 // 23. JHOOTH KA PYAAR COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "jhoothpyaar",
   alias: ["fakelove", "dikhawa"],
   desc: "Reveal whose love is fake",
@@ -635,7 +826,7 @@ cmd({
 // ============================================
 // 24. SIYAANI BAT COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "siyaanibaat",
   alias: ["lifetip", "aqalmand"],
   desc: "Share random funny life advice",
@@ -657,7 +848,7 @@ cmd({
 // ============================================
 // 25. MOHABBAT KA QARZ COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "mohabbatqarz",
   alias: ["lovedebt", "ehsaan"],
   desc: "Pay love debt to someone",
@@ -679,7 +870,7 @@ cmd({
 // ============================================
 // 26. NAZAR UTARAO COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "nazarutarao",
   alias: ["nazar", "burinazar"],
   desc: "Remove evil eye in funny style",
@@ -702,7 +893,7 @@ cmd({
 // ============================================
 // 27. ROMANTIC BAKWAAS COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "romanticbakwaas",
   alias: ["filmibaatein", "dialogbaazi"],
   desc: "Share filmy romantic dialogues",
@@ -729,7 +920,7 @@ cmd({
 // ============================================
 // 28. AASHIQANA AWARD COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "aashiqanaaward",
   alias: ["romanticaward", "pyaaraward"],
   desc: "Give romantic award to someone",
@@ -757,7 +948,7 @@ cmd({
 // ============================================
 // 29. MOHABBAT TERI COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "mohabbatteri",
   alias: ["yourlovetype", "pyaarkatype"],
   desc: "Find out your love type",
@@ -785,7 +976,7 @@ cmd({
 // ============================================
 // 30. DIL KHOL KE COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "dilkhol",
   alias: ["openup", "dilkhabaat"],
   desc: "Open up your heart to someone",
@@ -812,7 +1003,7 @@ cmd({
 // ============================================
 // 31. GUSSA PYAAR COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "gussapyaar",
   alias: ["lovehate", "gusspyar"],
   desc: "Express angry love",
@@ -834,7 +1025,7 @@ cmd({
 // ============================================
 // 32. JASOOS COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "jasoos",
   alias: ["spy", "jasus"],
   desc: "Find the group spy",
@@ -857,7 +1048,7 @@ cmd({
 // ============================================
 // 33. TANGA PHANDA COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "tangaphanda",
   alias: ["trapped", "phanda"],
   desc: "Trap someone in love",
@@ -879,7 +1070,7 @@ cmd({
 // ============================================
 // 34. MUFT ADVICE COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "muftadvice",
   alias: ["freeadvice", "nasheehat"],
   desc: "Free love advice",
@@ -901,7 +1092,7 @@ cmd({
 // ============================================
 // 35. NAKHREBAAZ COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "nakhrebaaz",
   alias: ["drama", "nakhre"],
   desc: "Find biggest drama queen/king",
@@ -924,7 +1115,7 @@ cmd({
 // ============================================
 // 36. ANOKHA PYAAR COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "anokhapyaar",
   alias: ["uniquelove", "ajeebmohabbat"],
   desc: "Express love in unique way",
@@ -951,7 +1142,7 @@ cmd({
 // ============================================
 // 37. BHAAG GAYA/GAYI COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "bhaaggaya",
   alias: ["runaway", "ghaib"],
   desc: "Find who ran away from group",
@@ -974,7 +1165,7 @@ cmd({
 // ============================================
 // 38. KHUSH NASEEBI COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "khushnaseebi",
   alias: ["lucky2", "bhagyashan"],
   desc: "Find today's luckiest person",
@@ -997,7 +1188,7 @@ cmd({
 // ============================================
 // 39. RONE WALA COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "ronewala",
   alias: ["emotional", "drama2"],
   desc: "Find most emotional person",
@@ -1020,7 +1211,7 @@ cmd({
 // ============================================
 // 40. WAQT GUZARNA COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "waqtguzarna",
   alias: ["timewaster", "bakwastime"],
   desc: "Show how someone wastes time",
@@ -1042,7 +1233,7 @@ cmd({
 // ============================================
 // 41. CHAND SA CHEHRA COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "chandsa",
   alias: ["moonface", "chandchehra"],
   desc: "Praise someone's moon-like beauty",
@@ -1070,7 +1261,7 @@ cmd({
 // ============================================
 // 42. DOST YA DILDAR COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "dostyadildar",
   alias: ["friendorlover", "kyadono"],
   desc: "Find out friend or lover",
@@ -1098,7 +1289,7 @@ cmd({
 // ============================================
 // 43. GALAT FEHMI COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "galatfehmi",
   alias: ["misunderstand", "confuse"],
   desc: "Create dramatic misunderstanding",
@@ -1120,7 +1311,7 @@ cmd({
 // ============================================
 // 44. PERFECT MATCH COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "perfectmatch",
   alias: ["idealmatch", "jodijori"],
   desc: "Reveal perfect match scientifically",
@@ -1142,7 +1333,7 @@ cmd({
 // ============================================
 // 45. RAAZ KHOLA COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "raazkhola",
   alias: ["secretreveal", "raazkholdo"],
   desc: "Reveal someone's hidden secret",
@@ -1170,7 +1361,7 @@ cmd({
 // ============================================
 // 46. MOHABBAT KA DARJAA COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "mohabbatdarjaa",
   alias: ["lovelevel", "pyaarlevel"],
   desc: "Check love level between two people",
@@ -1195,7 +1386,7 @@ cmd({
 // ============================================
 // 47. DUA COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "dua",
   alias: ["prayer", "aashirwaad"],
   desc: "Pray for someone from heart",
@@ -1222,7 +1413,7 @@ cmd({
 // ============================================
 // 48. KHWAABON WALA COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "khwaabon",
   alias: ["dreams", "sapne"],
   desc: "Express dream-related love",
@@ -1260,7 +1451,7 @@ cmd({
 // ============================================
 // 1. AKELA COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "akela",
   alias: ["alone", "single4ever"],
   desc: "Reveal the forever alone person in group",
@@ -1288,7 +1479,7 @@ cmd({
 // ============================================
 // 2. BEWAFA COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "bewafa",
   alias: ["betrayal", "dhoka"],
   desc: "Dramatic betrayal scene in group",
@@ -1315,7 +1506,7 @@ cmd({
 // ============================================
 // 3. CHAKKAR COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "chakkar",
   alias: ["dizzy", "confused2"],
   desc: "Getting dizzy in love",
@@ -1337,7 +1528,7 @@ cmd({
 // ============================================
 // 4. ULLU BANANA COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "ullubana",
   alias: ["prank", "fooling"],
   desc: "Prank someone in group",
@@ -1364,7 +1555,7 @@ cmd({
 // ============================================
 // 5. TAALI BAJAO COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "taalibajao",
   alias: ["clap", "shukriya"],
   desc: "Clap for someone in appreciation",
@@ -1386,7 +1577,7 @@ cmd({
 // ============================================
 // 6. NEEND URAI COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "neendurai",
   alias: ["sleepstealer", "insomnia"],
   desc: "Reveal who stole your sleep",
@@ -1408,7 +1599,7 @@ cmd({
 // ============================================
 // 7. CHATPATA COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "chatpata",
   alias: ["spicy", "teekha"],
   desc: "Find the spiciest personality in group",
@@ -1431,7 +1622,7 @@ cmd({
 // ============================================
 // 8. WAITING ROOM COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "waitingroom",
   alias: ["waitkaro", "doubletch"],
   desc: "Show who's waiting for reply",
@@ -1454,7 +1645,7 @@ cmd({
 // ============================================
 // 9. TAJ COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "taj",
   alias: ["crown", "king", "queen"],
   desc: "Crown someone as king/queen of group",
@@ -1477,7 +1668,7 @@ cmd({
 // ============================================
 // 10. LAFANGAA COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "lafangaa",
   alias: ["naughty", "shararat"],
   desc: "Reveal the naughtiest person in group",
@@ -1500,7 +1691,7 @@ cmd({
 // ============================================
 // 11. CHOCOLATE WALA COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "chocolatewala",
   alias: ["meetha", "sweet"],
   desc: "Find the sweetest person in group",
@@ -1523,7 +1714,7 @@ cmd({
 // ============================================
 // 12. BAAT KAATNA COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "baatkaatna",
   alias: ["interrupt", "beechmein"],
   desc: "Find the biggest interrupter",
@@ -1546,7 +1737,7 @@ cmd({
 // ============================================
 // 13. PALAT COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "palat",
   alias: ["turnback", "wapasaa"],
   desc: "Will they turn around Bollywood style",
@@ -1570,7 +1761,7 @@ cmd({
 // ============================================
 // 14. GAANA SUNAO COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "gaanasunao",
   alias: ["dedicate", "song4u"],
   desc: "Dedicate a song to someone randomly",
@@ -1598,7 +1789,7 @@ cmd({
 // ============================================
 // 15. HAATH THAMNA COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "haaththamna",
   alias: ["handhold", "saathchalo"],
   desc: "Virtual hand holding romantic scene",
@@ -1620,7 +1811,7 @@ cmd({
 // ============================================
 // 16. CHUP RAHNA COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "chuprahna",
   alias: ["silence", "khaamoshi"],
   desc: "Silent treatment drama in group",
@@ -1642,7 +1833,7 @@ cmd({
 // ============================================
 // 17. PHOOLON KA HAAR COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "phoolonkahaar",
   alias: ["garland", "mala"],
   desc: "Give someone a garland of love",
@@ -1664,7 +1855,7 @@ cmd({
 // ============================================
 // 18. GHOOR KE DEKHNA COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "ghoordekhna",
   alias: ["stare", "nigahein"],
   desc: "Staring contest romantic scene",
@@ -1686,7 +1877,7 @@ cmd({
 // ============================================
 // 19. BAHAANA COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "bahaana",
   alias: ["excuse", "bakwaasreason"],
   desc: "Find the biggest excuse maker",
@@ -1709,7 +1900,7 @@ cmd({
 // ============================================
 // 20. TARKEEB COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "tarkeeb",
   alias: ["plan", "jugaad"],
   desc: "Share clever plan to win love",
@@ -1741,7 +1932,7 @@ cmd({
 // ============================================
 
 // 21. HASSI CHHUPA COMMAND
-cmd({
+registerCmd({
   pattern: "hassichhupa",
   alias: ["hidingsmile", "musakura"],
   desc: "Reveal who's hiding their smile",
@@ -1762,7 +1953,7 @@ cmd({
 });
 
 // 22. MOBILE BAND KARO COMMAND
-cmd({
+registerCmd({
   pattern: "mobileband",
   alias: ["putdown", "offkaro"],
   desc: "Order someone to put phone down",
@@ -1790,7 +1981,7 @@ cmd({
 // ============================================
 // 23. PAGALPAN KA CERTIFICATE COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "pagalpancert",
   alias: ["crazycert", "diwanapan"],
   desc: "Give official crazy certificate",
@@ -1813,7 +2004,7 @@ cmd({
 // ============================================
 // 24. MOBILE WALLPAPER COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "wallpaper",
   alias: ["lockscreen", "screensaver"],
   desc: "Reveal whose photo is wallpaper",
@@ -1835,7 +2026,7 @@ cmd({
 // ============================================
 // 25. DONO BAAT KARO COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "donobaat",
   alias: ["talkboth", "batcheet"],
   desc: "Force two people to talk",
@@ -1858,7 +2049,7 @@ cmd({
 // ============================================
 // 26. KAAN PAKADNA COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "kaanpakadna",
   alias: ["sorry2", "maafi"],
   desc: "Dramatic sorry gesture",
@@ -1880,7 +2071,7 @@ cmd({
 // ============================================
 // 27. TAQDIR COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "taqdir",
   alias: ["fate", "muqaddar"],
   desc: "Reveal what fate has written",
@@ -1902,7 +2093,7 @@ cmd({
 // ============================================
 // 28. KAPKAPI COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "kapkapi",
   alias: ["nervous", "darana"],
   desc: "Nervous feeling around crush",
@@ -1924,7 +2115,7 @@ cmd({
 // ============================================
 // 29. TAARIF MEIN COMMIT COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "taarifcommit",
   alias: ["compliment2", "sachsach"],
   desc: "Honest compliment from heart",
@@ -1951,7 +2142,7 @@ cmd({
 // ============================================
 // 30. CAPTION CONTEST COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "captioncontest",
   alias: ["caption", "caption4u"],
   desc: "Give funny caption for DP",
@@ -1980,7 +2171,7 @@ cmd({
 // ============================================
 // 31. ZYADA SOCHA COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "zyadasocha",
   alias: ["overthink", "dimaaglaga"],
   desc: "Reveal the overthinker",
@@ -2003,7 +2194,7 @@ cmd({
 // ============================================
 // 32. GHAZAB COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "ghazab",
   alias: ["amazing2", "kamaal"],
   desc: "Reveal amazingly weird person",
@@ -2026,7 +2217,7 @@ cmd({
 // ============================================
 // 33. ONLINE DEKHNA COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "onlinedekhna",
   alias: ["onlinecheck", "stalk"],
   desc: "Reveal online status stalking",
@@ -2049,7 +2240,7 @@ cmd({
 // ============================================
 // 34. DUSHMAN KA DUSHMAN COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "dushmankadushman",
   alias: ["enemyenemy", "hamdard"],
   desc: "Enemy of enemy is friend",
@@ -2071,7 +2262,7 @@ cmd({
 // ============================================
 // 35. BURA NA MANO COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "buraanamano",
   alias: ["nooffense", "mazaakmein"],
   desc: "No offense style truth",
@@ -2098,7 +2289,7 @@ cmd({
 // ============================================
 // 36. MIRROR MIRROR COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "mirrormirror",
   alias: ["selfconfidence", "aainaa"],
   desc: "Confidence boost game",
@@ -2121,7 +2312,7 @@ cmd({
 // ============================================
 // 37. MERA HERO COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "merahero",
   alias: ["hero", "savior"],
   desc: "Find today's group hero",
@@ -2144,7 +2335,7 @@ cmd({
 // ============================================
 // 38. NATKHAT COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "natkhat",
   alias: ["mischief", "shararat2"],
   desc: "Find most mischievous person",
@@ -2167,7 +2358,7 @@ cmd({
 // ============================================
 // 39. PARESHAN COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "pareshan",
   alias: ["worried", "tension"],
   desc: "Find the biggest worrier",
@@ -2190,7 +2381,7 @@ cmd({
 // ============================================
 // 40. INTERVIEW COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "interview",
   alias: ["hireornot", "qanda"],
   desc: "Love interest interview style",
@@ -2212,7 +2403,7 @@ cmd({
 // ============================================
 // 41. KHEL TAMAM COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "kheltamam",
   alias: ["gameover", "tamam"],
   desc: "Game over in love drama",
@@ -2234,7 +2425,7 @@ cmd({
 // ============================================
 // 42. RISHTA PAKKA COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "rishtapakka",
   alias: ["engaged", "mangni"],
   desc: "Engagement drama in group",
@@ -2257,7 +2448,7 @@ cmd({
 // ============================================
 // 43. PYAAR KI DUKAAN COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "pyaardukaan",
   alias: ["loveshop", "dildukaan"],
   desc: "Buy from love shop",
@@ -2287,7 +2478,7 @@ cmd({
 // ============================================
 // 44. ZABAAN SAMBHALNA COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "zabaansambhlo",
   alias: ["watchwords", "muh"],
   desc: "Watch your words warning",
@@ -2309,7 +2500,7 @@ cmd({
 // ============================================
 // 45. JHOOTHA WADA COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "jhootawada",
   alias: ["brokenpromise", "wada"],
   desc: "Expose broken promise maker",
@@ -2331,7 +2522,7 @@ cmd({
 // ============================================
 // 46. SONA WALA COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "sonawala",
   alias: ["precious", "heera"],
   desc: "Most precious person in group",
@@ -2354,7 +2545,7 @@ cmd({
 // ============================================
 // 47. GOSSIP COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "gossip",
   alias: ["charcha", "khabar"],
   desc: "Share group gossip",
@@ -2382,7 +2573,7 @@ cmd({
 // ============================================
 // 48. FUNNY RISHTEDAR COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "funnyrishtedar",
   alias: ["relative", "rishtedaar"],
   desc: "Make someone funny relative",
@@ -2412,7 +2603,7 @@ cmd({
 // ============================================
 // 49. AANKHEIN BAND KAR COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "aankheband",
   alias: ["trustfall", "blindtrust"],
   desc: "Trust test with closed eyes",
@@ -2434,7 +2625,7 @@ cmd({
 // ============================================
 // 50. ALVIDA NAHI KEHNA COMMAND
 // ============================================
-cmd({
+registerCmd({
   pattern: "alvidanahi",
   alias: ["nodisconnect", "hamesha"],
   desc: "Promise to never say goodbye",
@@ -2463,7 +2654,7 @@ cmd({
 // ============================================
 // 1. PERSONALITY TEST
 // ============================================
-cmd({
+registerCmd({
   pattern: "personalitytest",
   alias: ["mytype", "konsa"],
   desc: "Find out your personality type",
@@ -2488,7 +2679,7 @@ cmd({
 // ============================================
 // 2. SUPER POWER
 // ============================================
-cmd({
+registerCmd({
   pattern: "superpower",
   alias: ["meripower", "ability"],
   desc: "Discover your hidden superpower",
@@ -2512,7 +2703,7 @@ cmd({
 // ============================================
 // 3. PAST LIFE
 // ============================================
-cmd({
+registerCmd({
   pattern: "pastlife",
   alias: ["pichlajanm", "aagla"],
   desc: "Who were you in your past life (fun)",
@@ -2536,7 +2727,7 @@ cmd({
 // ============================================
 // 4. DARK SECRET
 // ============================================
-cmd({
+registerCmd({
   pattern: "darksecret",
   alias: ["chhuparaaz", "secret2"],
   desc: "Reveal your funny dark secret",
@@ -2560,7 +2751,7 @@ cmd({
 // ============================================
 // 5. CELEBRITY MATCH
 // ============================================
-cmd({
+registerCmd({
   pattern: "celebmatch",
   alias: ["starmatch", "famousmatch"],
   desc: "Which celebrity are you like",
@@ -2584,7 +2775,7 @@ cmd({
 // ============================================
 // 6. LIFE BATTERY
 // ============================================
-cmd({
+registerCmd({
   pattern: "lifebattery",
   alias: ["battery", "energylevel"],
   desc: "Check your life battery percentage",
@@ -2619,7 +2810,7 @@ cmd({
 // ============================================
 // 7. DESI MOM QUOTES
 // ============================================
-cmd({
+registerCmd({
   pattern: "desimom",
   alias: ["ammi", "momquote"],
   desc: "Famous desi mom quotes",
@@ -2644,7 +2835,7 @@ cmd({
 // ============================================
 // 8. DESI DAD QUOTES
 // ============================================
-cmd({
+registerCmd({
   pattern: "desidad",
   alias: ["abbu", "dadquote"],
   desc: "Famous desi dad quotes",
@@ -2668,7 +2859,7 @@ cmd({
 // ============================================
 // 9. KHANA JUDGE
 // ============================================
-cmd({
+registerCmd({
   pattern: "khanajudge",
   alias: ["foodjudge", "khanacheck"],
   desc: "Rate your food choices today",
@@ -2691,7 +2882,7 @@ cmd({
 // ============================================
 // 10. RISHTA AUNTY
 // ============================================
-cmd({
+registerCmd({
   pattern: "rishtaaunt",
   alias: ["auntyjee", "rishtawali"],
   desc: "Rishta aunty style roast",
@@ -2718,7 +2909,7 @@ cmd({
 // 11-20 COMMANDS
 // ============================================
 
-cmd({
+registerCmd({
   pattern: "challenge",
   alias: ["dailychallenge", "aajkachallenge"],
   desc: "Get a fun daily challenge",
@@ -2739,7 +2930,7 @@ cmd({
   }
 });
 
-cmd({
+registerCmd({
   pattern: "friendtype",
   alias: ["kayadost", "dosttype"],
   desc: "What kind of friend are you",
@@ -2768,7 +2959,7 @@ cmd({
 // ============================================
 // 13. PAKORA WEATHER
 // ============================================
-cmd({
+registerCmd({
   pattern: "pakoraweather",
   alias: ["pakora", "baarish"],
   desc: "Pakora weather check",
@@ -2790,7 +2981,7 @@ cmd({
 // ============================================
 // 14. RESULT ANNOUNCEMENT
 // ============================================
-cmd({
+registerCmd({
   pattern: "result",
   alias: ["natijacheck", "resultaaya"],
   desc: "Funny student result reactions",
@@ -2821,7 +3012,7 @@ cmd({
 // ============================================
 // 15. CRICKET COMMENTARY
 // ============================================
-cmd({
+registerCmd({
   pattern: "cricketcomm",
   alias: ["commentary", "cricket"],
   desc: "Funny Pakistan cricket style commentary",
@@ -2844,7 +3035,7 @@ cmd({
 // ============================================
 // 16. MARRIAGE PREDICTION
 // ============================================
-cmd({
+registerCmd({
   pattern: "shadiprediction",
   alias: ["shadi1", "marriagepred"],
   desc: "Funny marriage prediction",
@@ -2871,7 +3062,7 @@ cmd({
 // ============================================
 // 17. STRESS LEVEL
 // ============================================
-cmd({
+registerCmd({
   pattern: "stresslevel",
   alias: ["tension", "stress"],
   desc: "Check your current stress level",
@@ -2900,7 +3091,7 @@ cmd({
 // ============================================
 // 18. MOTIVATIONAL SLAP
 // ============================================
-cmd({
+registerCmd({
   pattern: "motivationalslap",
   alias: ["wakeupcall", "jhaanko"],
   desc: "Brutal honest motivational message",
@@ -2923,7 +3114,7 @@ cmd({
 // ============================================
 // 19. RANDOM WIKIPEDIA STYLE FACT
 // ============================================
-cmd({
+registerCmd({
   pattern: "wikifact",
   alias: ["knowledge", "ilm"],
   desc: "Random interesting knowledge fact",
@@ -2947,7 +3138,7 @@ cmd({
 // ============================================
 // 20. ANIME PERSONALITY
 // ============================================
-cmd({
+registerCmd({
   pattern: "animepersonality",
   alias: ["animetype", "anime"],
   desc: "Which anime character type are you",
@@ -2971,7 +3162,7 @@ cmd({
 // ============================================
 // 21. WEATHER MOOD
 // ============================================
-cmd({
+registerCmd({
   pattern: "weathermood",
   alias: ["mausam", "moodweather"],
   desc: "Your mood matches which weather",
@@ -2995,7 +3186,7 @@ cmd({
 // ============================================
 // 22. TAUNTING MACHINE
 // ============================================
-cmd({
+registerCmd({
   pattern: "taunt",
   alias: ["totka", "chherhao"],
   desc: "Fun taunts to send to friends",
@@ -3019,7 +3210,7 @@ cmd({
 // ============================================
 // 23. GHAR KA WIFI
 // ============================================
-cmd({
+registerCmd({
   pattern: "gharkawifi",
   alias: ["wifimood", "netcheck"],
   desc: "Desi home WiFi struggles",
@@ -3042,7 +3233,7 @@ cmd({
 // ============================================
 // 24. LOVE CALCULATOR 2.0
 // ============================================
-cmd({
+registerCmd({
   pattern: "lovecalc2",
   alias: ["ishqcalc", "pyaarcalc"],
   desc: "Advanced funny love calculator",
@@ -3078,7 +3269,7 @@ cmd({
 // ============================================
 // 25. DUNIYA KI PROBLEMS
 // ============================================
-cmd({
+registerCmd({
   pattern: "problems",
   alias: ["musalay", "issues"],
   desc: "Funny list of real life problems",
@@ -3100,7 +3291,7 @@ cmd({
 // ============================================
 // 26. VIRTUAL HUG
 // ============================================
-cmd({
+registerCmd({
   pattern: "hugkr",
   alias: ["gale", "embrace"],
   desc: "Send a virtual hug to anyone",
@@ -3119,7 +3310,7 @@ cmd({
 // ============================================
 // 27. RANDOM ROAST MILD
 // ============================================
-cmd({
+registerCmd({
   pattern: "mildroast",
   alias: ["lightroast", "chhotatease"],
   desc: "Mild fun roast for friends",
@@ -3143,7 +3334,7 @@ cmd({
 // ============================================
 // 28. WISDOM COOKIE
 // ============================================
-cmd({
+registerCmd({
   pattern: "wisdomcookie",
   alias: ["fortunecookie", "qismat"],
   desc: "Open a wisdom cookie",
@@ -3167,7 +3358,7 @@ cmd({
 // ============================================
 // 29. MONSTER ENERGY CHECK
 // ============================================
-cmd({
+registerCmd({
   pattern: "monsterenergy",
   alias: ["energydrink", "boost"],
   desc: "Do you need energy boost today",
@@ -3196,7 +3387,7 @@ cmd({
 // ============================================
 // 30. SOCIAL MEDIA ADDICTION
 // ============================================
-cmd({
+registerCmd({
   pattern: "socialmedia",
   alias: ["smaddiction", "appcheck"],
   desc: "Your social media personality",
@@ -3222,7 +3413,7 @@ cmd({
 // ============================================
 
 // 31. WHAT ANIMAL
-cmd({
+registerCmd({
   pattern: "whatanimal",
   alias: ["konasajanwar", "spiritanimal"],
   desc: "Which animal represents you",
@@ -3244,7 +3435,7 @@ cmd({
 });
 
 // 32. TYPING SPEED
-cmd({
+registerCmd({
   pattern: "typingspeed",
   alias: ["typingcheck", "typefast"],
   desc: "Fun typing speed personality",
@@ -3265,7 +3456,7 @@ cmd({
 });
 
 // 33. NIGHT OWL OR EARLY BIRD
-cmd({
+registerCmd({
   pattern: "nightowl",
   alias: ["raatka", "subahka"],
   desc: "Are you night owl or early bird",
@@ -3285,7 +3476,7 @@ cmd({
 });
 
 // 34. PIZZA OR BIRYANI
-cmd({
+registerCmd({
   pattern: "pizzaorbiryani",
   alias: ["foodwars", "khanajang"],
   desc: "The ultimate food debate",
@@ -3306,7 +3497,7 @@ cmd({
 });
 
 // 35. EMOTIONAL DAMAGE
-cmd({
+registerCmd({
   pattern: "emotionaldamage",
   alias: ["dmg", "heartdamage"],
   desc: "Calculate emotional damage level",
@@ -3343,7 +3534,7 @@ cmd({
 // ============================================
 // 36. COMPLAIN BOX
 // ============================================
-cmd({
+registerCmd({
   pattern: "complainbox",
   alias: ["shikayat", "rant"],
   desc: "Virtual complaint box - vent out",
@@ -3372,7 +3563,7 @@ cmd({
 // ============================================
 // 37. RANDOM NUMBER GAME
 // ============================================
-cmd({
+registerCmd({
   pattern: "numbergame",
   alias: ["guessnumber", "luckynum"],
   desc: "Pick a number 1-10 game",
@@ -3406,7 +3597,7 @@ cmd({
 // ============================================
 // 38. COIN FLIP
 // ============================================
-cmd({
+registerCmd({
   pattern: "coinflip",
   alias: ["toss", "sikka"],
   desc: "Flip a coin for decisions",
@@ -3427,7 +3618,7 @@ cmd({
 // ============================================
 // 39. APNA NAAM MATLAB
 // ============================================
-cmd({
+registerCmd({
   pattern: "naammatlab",
   alias: ["namemeaning", "mynameis"],
   desc: "Fun meaning of your name",
@@ -3466,7 +3657,7 @@ cmd({
 // ============================================
 // 40. RANDOM COMPLIMENT
 // ============================================
-cmd({
+registerCmd({
   pattern: "compliment2",
   alias: ["tarif2", "nicetalk"],
   desc: "Random genuine compliment generator",
@@ -3490,7 +3681,7 @@ cmd({
 // ============================================
 // 41. DESI EXAM SEASON
 // ============================================
-cmd({
+registerCmd({
   pattern: "examseason",
   alias: ["imtihaan", "exams"],
   desc: "Relatable exam season memes",
@@ -3513,7 +3704,7 @@ cmd({
 // ============================================
 // 42. RANDOM FACT PAKISTAN
 // ============================================
-cmd({
+registerCmd({
   pattern: "pakfact",
   alias: ["pakistanfact", "desitruth"],
   desc: "Fun facts about Pakistani culture",
@@ -3537,7 +3728,7 @@ cmd({
 // ============================================
 // 43. STORY GENERATOR
 // ============================================
-cmd({
+registerCmd({
   pattern: "storygenerate",
   alias: ["randomstory", "kahani2"],
   desc: "Generate a random 3-line story",
@@ -3564,7 +3755,7 @@ cmd({
 // ============================================
 // 44. BOT ROAST ITSELF
 // ============================================
-cmd({
+registerCmd({
   pattern: "botroast",
   alias: ["roastbot", "teaseme"],
   desc: "The bot roasts itself",
@@ -3587,7 +3778,7 @@ cmd({
 // ============================================
 // 45. WEEKLY REPORT
 // ============================================
-cmd({
+registerCmd({
   pattern: "weeklyreport",
   alias: ["haftekar", "weeksummary"],
   desc: "Funny weekly life report",
@@ -3609,7 +3800,7 @@ cmd({
 // ============================================
 // 46. WHAT COLOR IS YOUR SOUL
 // ============================================
-cmd({
+registerCmd({
   pattern: "soulcolor",
   alias: ["roohkaring", "soulcheck"],
   desc: "What color is your soul",
@@ -3633,7 +3824,7 @@ cmd({
 // ============================================
 // 47. THANK YOU GENERATOR
 // ============================================
-cmd({
+registerCmd({
   pattern: "shukria",
   alias: ["thankyou2", "thanks"],
   desc: "Send a special thank you message",
@@ -3656,7 +3847,7 @@ cmd({
 // ============================================
 // 48. DESI WISDOM
 // ============================================
-cmd({
+registerCmd({
   pattern: "desiwisdom",
   alias: ["kahawat", "desiproverb"],
   desc: "Desi proverbs with funny commentary",
@@ -3680,7 +3871,7 @@ cmd({
 // ============================================
 // 49. RANDOM KIND MESSAGE
 // ============================================
-cmd({
+registerCmd({
   pattern: "kindness",
   alias: ["nicemsg", "meherbani"],
   desc: "Send a random kindness message",
@@ -3703,7 +3894,7 @@ cmd({
 // ============================================
 // 50. ALL NEW COMMANDS LIST
 // ============================================
-cmd({
+registerCmd({
   pattern: "newcmds",
   alias: ["newlist", "freshcmds"],
   desc: "Show all new fun commands",
@@ -3722,7 +3913,7 @@ cmd({
 // ============================================
 
 // 1. TAG LAFZ — tags the replied person with a romantic line (reply required)
-cmd({
+registerCmd({
   pattern: "taglafz",
   alias: ["tagline", "romantictag"],
   desc: "Reply to someone to tag them with a romantic line",
@@ -3749,7 +3940,7 @@ cmd({
 });
 
 // 2. FILMY ENTRY — filmy style entry of replied person
-cmd({
+registerCmd({
   pattern: "filmyentry",
   alias: ["entry", "heropanti"],
   desc: "Reply to someone for their filmy hero entry",
@@ -3772,7 +3963,7 @@ cmd({
 });
 
 // 3. SACCHA ASHIQ — true lover certificate (reply)
-cmd({
+registerCmd({
   pattern: "sachaashiq",
   alias: ["truelover", "loyalcert"],
   desc: "Reply to someone to give them true lover certificate",
@@ -3792,7 +3983,7 @@ cmd({
 });
 
 // 4. DIL KI BAAT — heart's message for replied person
-cmd({
+registerCmd({
   pattern: "dilkebaat",
   alias: ["dilbola", "hearttalk"],
   desc: "Reply to someone - dil unke liye kya kehta hai",
@@ -3815,7 +4006,7 @@ cmd({
 });
 
 // 5. PYAAR STATUS — your love status today (no mention)
-cmd({
+registerCmd({
   pattern: "pyaarstatus",
   alias: ["lovestatus", "aajkipyaar"],
   desc: "Your love status for today",
@@ -3834,7 +4025,7 @@ cmd({
 });
 
 // 6. SHIP NAME — combine two names
-cmd({
+registerCmd({
   pattern: "shipname",
   alias: ["ship", "jodiname"],
   desc: "Combine two names: .shipname Ali Sara",
@@ -3851,7 +4042,7 @@ cmd({
 });
 
 // 7. AAJ KA DIL — heart mood of the day
-cmd({
+registerCmd({
   pattern: "aajkadil",
   alias: ["dilmood", "heartoday"],
   desc: "Your heart's mood today",
@@ -3870,7 +4061,7 @@ cmd({
 });
 
 // 8. PYAAR SHAYARI — shayari tagging replied person
-cmd({
+registerCmd({
   pattern: "pyaarshayari",
   alias: ["shayari4u", "sher2"],
   desc: "Reply to someone to send them a shayari",
@@ -3893,7 +4084,7 @@ cmd({
 });
 
 // 9. MOHABBAT TRACKER — how much you miss the replied person
-cmd({
+registerCmd({
   pattern: "mohabattracker",
   alias: ["misstracker", "yaadtracker"],
   desc: "Reply to someone - kitna miss karte ho",
@@ -3913,7 +4104,7 @@ cmd({
 });
 
 // 10. FUN MENU — list all fun commands
-cmd({
+registerCmd({
   pattern: "funmenu",
   alias: ["funlist", "fmenu"],
   desc: "Show all fun text commands",
