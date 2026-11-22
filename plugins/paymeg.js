@@ -305,36 +305,74 @@ cmd({
     }
 });
 
+// ==================== PAYMSG COMMAND (FIXED) ====================
 cmd({
     pattern: "paymsg",
     alias: ["pay", "payment"],
     desc: "Send a custom payment message to a group",
     category: "owner",
+    react: "💸",
     filename: __filename
-}, async (client, message, match, { from, isCreator, reply, text }) => {
+}, async (client, message, match, { from, isCreator, reply, text, q, body }) => {
     try {
         if (!isCreator) return await reply("*📛 Owner Only Command*");
 
-        let inputText = typeof text === 'string' ? text : (typeof match === 'string' ? match : match?.text || "");
-        const args = inputText.trim().split(/\s+/);
+        const msgContent = message.message || {};
 
-        if (args.length < 2) {
+        // Read the raw input from every possible source.
+        // Plain text arrives as `conversation`, but messages that contain a
+        // link arrive as `extendedTextMessage` (link preview), so both must
+        // be checked — this was why the command died on group links.
+        let inputText = '';
+
+        if (typeof text === 'string' && text.trim()) inputText = text;
+        else if (typeof q === 'string' && q.trim()) inputText = q;
+        else if (typeof body === 'string' && body.trim()) inputText = body;
+        else if (typeof match === 'string' && match.trim()) inputText = match;
+        else if (match?.text && String(match.text).trim()) inputText = String(match.text);
+        else {
+            inputText = msgContent.conversation
+                || msgContent.extendedTextMessage?.text
+                || msgContent.imageMessage?.caption
+                || msgContent.videoMessage?.caption
+                || '';
+        }
+
+        inputText = String(inputText || '').trim();
+
+        // Strip the command token itself if it is part of the text
+        inputText = inputText
+            .replace(/^\.?\s*(paymsg|payment)\b\s*/i, '')
+            .replace(/^pay\b\s*/i, '')
+            .trim();
+
+        // Find the group invite link anywhere in the text
+        const inviteMatch = inputText.match(/(?:https?:\/\/)?chat\.whatsapp\.com\/([a-zA-Z0-9_-]+)/);
+
+        if (!inviteMatch) {
             return await reply("*🍁 Usage:* `.paymsg <grouplink> <message>`");
         }
 
-        const groupLink = args[0];
-        const noteText = args.slice(1).join(" ");
-
-        const inviteMatch = groupLink.match(/chat\.whatsapp\.com\/([a-zA-Z0-9]+)/);
-        if (!inviteMatch) return await reply("❌ Invalid group link format.");
-
         const inviteCode = inviteMatch[1];
+
+        // Note text = whatever comes after the link (works with or without a message)
+        const linkFull = inviteMatch[0];
+        const linkIndex = inputText.indexOf(linkFull);
+        let noteText = inputText.slice(linkIndex + linkFull.length).trim();
+
+        if (!noteText) noteText = "*💰 Payment Request*";
+
+        const progressReact = await client.sendMessage(from, {
+            react: { text: "⏳", key: message.key }
+        }).catch(() => {});
+
         let targetJid = null;
 
         try {
             const groupInfo = await client.groupGetInviteInfo(inviteCode);
             targetJid = groupInfo.id;
         } catch (e) {
+            await client.sendMessage(from, { react: { text: "❌", key: message.key } }).catch(() => {});
             return await reply("❌ Failed to get group info. (Is the bot inside the group?)");
         }
 
@@ -368,14 +406,16 @@ cmd({
         });
 
         await client.sendMessage(from, {
-            react: {
-                text: "✅",
-                key: message.key
-            }
+            react: { text: "✅", key: message.key }
         });
 
     } catch (error) {
         console.error("paymsg Error:", error);
-        await reply(`💢 Error: ${error.message}`);
+        // Always respond so the command never dies silently
+        try {
+            await reply(`💢 Error: ${error.message}`);
+        } catch (_) {
+            await client.sendMessage(from, { text: `💢 Error: ${error.message}` }, { quoted: message }).catch(() => {});
+        }
     }
 });
