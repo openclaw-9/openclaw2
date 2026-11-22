@@ -7,7 +7,7 @@ import FormData from 'form-data';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// ERFAN-MD 
+// ERFAN-MD
 
 // ImgBB API Key (free, working)
 const IMGBB_API_KEY = 'b63a821d989cdf895808a44aa5b76c33';
@@ -18,10 +18,45 @@ function extractNumber(jid) {
     return jid.split('@')[0];
 }
 
+// ========== SPACE TOLERANCE HELPERS ==========
+// These let commands still work when an extra space is typed after the
+// prefix, e.g. ". antilink on" behaves the same as ".antilink on".
+function spaceTolerantAliases(name, extra = []) {
+    const list = [...new Set([...extra, name])];
+    return [...list, ...list.map(a => ` ${a}`)];
+}
+
+// Returns the first meaningful argument (skips repeated command/alias words
+// that some frameworks include at the start of args)
+function firstArg(args, ...skipNames) {
+    const skip = new Set(skipNames.map(n => n.toLowerCase()));
+    const list = (args || []).map(a => String(a).trim()).filter(Boolean);
+    for (const a of list) {
+        if (!skip.has(a.toLowerCase())) return a;
+    }
+    return '';
+}
+
+// Joins all meaningful arguments into one sentence (skips command words)
+function joinArgs(args, ...skipNames) {
+    const skip = new Set(skipNames.map(n => n.toLowerCase()));
+    return (args || [])
+        .map(a => String(a).trim())
+        .filter(Boolean)
+        .filter(a => !skip.has(a.toLowerCase()))
+        .join(' ');
+}
+
+// Pretty on/off display instead of raw true/false
+function pretty(value) {
+    if (value === 'true' || value === true) return 'ON';
+    if (value === 'false' || value === false) return 'OFF';
+    return String(value || 'OFF').toUpperCase();
+}
 
 cmd({
     pattern: "statuslike",
-    alias: ["statusreact"],
+    alias: spaceTolerantAliases("statuslike", ["statusreact"]),
     desc: "Toggle auto view status",
     category: "settings",
     react: "👁️",
@@ -29,23 +64,24 @@ cmd({
 },
 async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, userConfig, sanitizedNumber }) => {
     if (!isCreator) {
-        return reply("*📛 ᴛʜɪs ɪs ᴀɴ ᴏᴡɴᴇʀ ᴄᴏᴍᴍᴀɴᴅ.*");
+        return reply("*📛 Owner only command.*");
     }
 
-    if (!args[0]) {
-        return reply(`📌 *Usᴀɢᴇ:* .statuslike on/off\n*Cᴜʀʀᴇɴᴛ:* ${userConfig.AUTO_LIKE_STATUS}`);
+    const value = firstArg(args, "statuslike", "statusreact").toLowerCase();
+
+    if (!value) {
+        return reply(`📌 *Usage:* .statuslike on/off\n*Current:* ${pretty(userConfig.AUTO_LIKE_STATUS)}`);
     }
 
-    const value = args[0].toLowerCase();
     if (value !== 'on' && value !== 'off') {
-        return reply('❌ *Pʟᴇᴀsᴇ ᴜsᴇ:* on ᴏʀ off');
+        return reply('❌ *Please use:* on or off');
     }
 
     const newValue = value === 'on' ? 'true' : 'false';
     userConfig.AUTO_LIKE_STATUS = newValue;
     await updateUserConfig(sanitizedNumber, userConfig);
     
-    await reply(`✅ *Aᴜᴛᴏ Like Sᴛᴀᴛᴜs sᴇᴛ ᴛᴏ:* ${newValue}`);
+    await reply(`✅ *Auto Like Status:* ${pretty(newValue)}`);
 });
 
 // ===============================
@@ -53,7 +89,7 @@ async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, u
 // ===============================
 cmd({
     pattern: "botdp",
-    alias: ["botimage", "botpic", "botphoto"],
+    alias: spaceTolerantAliases("botdp", ["botimage", "botpic", "botphoto"]),
     desc: "Set bot display picture",
     category: "settings",
     react: "🖼️",
@@ -61,11 +97,11 @@ cmd({
 },
 async (conn, mek, m, { from, reply, isCreator, args, updateUserConfig, userConfig, sanitizedNumber, quoted }) => {
     if (!isCreator) {
-        return reply("*📛 ᴛʜɪs ɪs ᴀɴ ᴏᴡɴᴇʀ ᴄᴏᴍᴍᴀɴᴅ.*");
+        return reply("*📛 Owner only command.*");
     }
 
     try {
-        let imageUrl = args[0];
+        let imageUrl = firstArg(args, "botdp", "botimage", "botpic", "botphoto");
 
         // If no URL provided but replied to an image
         if (!imageUrl && m.quoted) {
@@ -110,7 +146,7 @@ async (conn, mek, m, { from, reply, isCreator, args, updateUserConfig, userConfi
         // Send success message with the image
         await conn.sendMessage(from, {
             image: { url: imageUrl },
-            caption: `✅ *Bot Display Picture Updated Successfully!*\n\n📁 *Image URL:* ${imageUrl}\n\n> © Updated by ERFAN-MD 💜`
+            caption: `✅ *Bot Display Picture Updated!*\n\n📁 *Image URL:* ${imageUrl}\n\n> © Updated by ERFAN-MD 💜`
         }, { quoted: mek });
 
     } catch (error) {
@@ -125,7 +161,7 @@ async (conn, mek, m, { from, reply, isCreator, args, updateUserConfig, userConfi
 // ===============================
 cmd({
     pattern: "welcome",
-    alias: ["welcome"],
+    alias: spaceTolerantAliases("welcome"),
     desc: "Toggle welcome messages",
     category: "settings",
     react: "🎉",
@@ -133,23 +169,24 @@ cmd({
 },
 async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, userConfig, sanitizedNumber }) => {
     if (!isCreator) {
-        return reply("*📛 ᴛʜɪs ɪs ᴀɴ ᴏᴡɴᴇʀ ᴄᴏᴍᴍᴀɴᴅ.*");
+        return reply("*📛 Owner only command.*");
     }
 
-    if (!args[0]) {
-        return reply(`📌 *Usᴀɢᴇ:* welcome on/off\n*Cᴜʀʀᴇɴᴛ:* ${userConfig.WELCOME}`);
+    const value = firstArg(args, "welcome").toLowerCase();
+
+    if (!value) {
+        return reply(`📌 *Usage:* .welcome on/off\n*Current:* ${pretty(userConfig.WELCOME)}`);
     }
 
-    const value = args[0].toLowerCase();
     if (value !== 'on' && value !== 'off') {
-        return reply('❌ *Pʟᴇᴀsᴇ ᴜsᴇ:* on ᴏʀ off');
+        return reply('❌ *Please use:* on or off');
     }
 
     const newValue = value === 'on' ? 'true' : 'false';
     userConfig.WELCOME = newValue;
     await updateUserConfig(sanitizedNumber, userConfig);
     
-    await reply(`✅ *Wᴇʟᴄᴏᴍᴇ sᴇᴛ ᴛᴏ:* ${newValue}`);
+    await reply(`✅ *Welcome messages:* ${pretty(newValue)}`);
 });
 
 // ===============================
@@ -157,7 +194,7 @@ async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, u
 // ===============================
 cmd({
     pattern: "goodbye",
-    alias: ["goodbye"],
+    alias: spaceTolerantAliases("goodbye"),
     desc: "Toggle goodbye messages",
     category: "settings",
     react: "👋",
@@ -165,23 +202,24 @@ cmd({
 },
 async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, userConfig, sanitizedNumber }) => {
     if (!isCreator) {
-        return reply("*📛 ᴛʜɪs ɪs ᴀɴ ᴏᴡɴᴇʀ ᴄᴏᴍᴍᴀɴᴅ.*");
+        return reply("*📛 Owner only command.*");
     }
 
-    if (!args[0]) {
-        return reply(`📌 *Usᴀɢᴇ:* goodbye on/off\n*Cᴜʀʀᴇɴᴛ:* ${userConfig.GOODBYE}`);
+    const value = firstArg(args, "goodbye").toLowerCase();
+
+    if (!value) {
+        return reply(`📌 *Usage:* .goodbye on/off\n*Current:* ${pretty(userConfig.GOODBYE)}`);
     }
 
-    const value = args[0].toLowerCase();
     if (value !== 'on' && value !== 'off') {
-        return reply('❌ *Pʟᴇᴀsᴇ ᴜsᴇ:* on ᴏʀ off');
+        return reply('❌ *Please use:* on or off');
     }
 
     const newValue = value === 'on' ? 'true' : 'false';
     userConfig.GOODBYE = newValue;
     await updateUserConfig(sanitizedNumber, userConfig);
     
-    await reply(`✅ *Goodbye sᴇᴛ ᴛᴏ:* ${newValue}`);
+    await reply(`✅ *Goodbye messages:* ${pretty(newValue)}`);
 });
 
 // ===============================
@@ -189,7 +227,7 @@ async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, u
 // ===============================
 cmd({
     pattern: "setwelcome",
-    alias: ["setwelcome"],
+    alias: spaceTolerantAliases("setwelcome"),
     desc: "Set custom welcome message\n\n*Placeholders:*\n• @user - Mention new member\n• @group - Group name\n• @desc - Group description\n• @count - Total members\n• @bot - Bot name\n• @time - Current time",
     category: "settings",
     react: "✏️",
@@ -197,18 +235,19 @@ cmd({
 },
 async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, userConfig, sanitizedNumber }) => {
     if (!isCreator) {
-        return reply("*📛 ᴛʜɪs ɪs ᴀɴ ᴏᴡɴᴇʀ ᴄᴏᴍᴍᴀɴᴅ.*");
+        return reply("*📛 Owner only command.*");
     }
 
-    if (!args[0]) {
-        return reply(`📌 *Cᴜʀʀᴇɴᴛ ᴡᴇʟᴄᴏᴍᴇ ᴍᴇssᴀɢᴇ:*\n\n${userConfig.WELCOME_MESSAGE || 'Not set'}\n\n*Usᴀɢᴇ:*.setwelcome <message>\n\n*Placeholders:*\n• @user - Mention new member\n• @group - Group name\n• @desc - Group description\n• @count - Total members\n• @bot - Bot name\n• @time - Current time`);
+    const welcomeMessage = joinArgs(args, "setwelcome");
+
+    if (!welcomeMessage) {
+        return reply(`📌 *Current welcome message:*\n\n${userConfig.WELCOME_MESSAGE || 'Not set'}\n\n*Usage:* .setwelcome <message>\n\n*Placeholders:*\n• @user - Mention new member\n• @group - Group name\n• @desc - Group description\n• @count - Total members\n• @bot - Bot name\n• @time - Current time`);
     }
 
-    const welcomeMessage = args.join(' ');
     userConfig.WELCOME_MESSAGE = welcomeMessage;
     await updateUserConfig(sanitizedNumber, userConfig);
     
-    await reply(`✅ *Wᴇʟᴄᴏᴍᴇ ᴍᴇssᴀɢᴇ sᴇᴛ ᴛᴏ:*\n\n${welcomeMessage}`);
+    await reply(`✅ *Welcome message set to:*\n\n${welcomeMessage}`);
 });
 
 // ===============================
@@ -216,7 +255,7 @@ async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, u
 // ===============================
 cmd({
     pattern: "setgoodbye",
-    alias: ["setgoodbye"],
+    alias: spaceTolerantAliases("setgoodbye"),
     desc: "Set custom goodbye message\n\n*Placeholders:*\n• @user - Mention leaving member\n• @group - Group name\n• @desc - Group description\n• @count - Total members\n• @bot - Bot name\n• @time - Current time",
     category: "settings",
     react: "✏️",
@@ -224,18 +263,19 @@ cmd({
 },
 async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, userConfig, sanitizedNumber }) => {
     if (!isCreator) {
-        return reply("*📛 ᴛʜɪs ɪs ᴀɴ ᴏᴡɴᴇʀ ᴄᴏᴍᴍᴀɴᴅ.*");
+        return reply("*📛 Owner only command.*");
     }
 
-    if (!args[0]) {
-        return reply(`📌 *Cᴜʀʀᴇɴᴛ ɢᴏᴏᴅʙʏᴇ ᴍᴇssᴀɢᴇ:*\n\n${userConfig.GOODBYE_MESSAGE || 'Not set'}\n\n*Usᴀɢᴇ:*.setgoodbye <message>\n\n*Placeholders:*\n• @user - Mention leaving member\n• @group - Group name\n• @desc - Group description\n• @count - Total members\n• @bot - Bot name\n• @time - Current time`);
+    const goodbyeMessage = joinArgs(args, "setgoodbye");
+
+    if (!goodbyeMessage) {
+        return reply(`📌 *Current goodbye message:*\n\n${userConfig.GOODBYE_MESSAGE || 'Not set'}\n\n*Usage:* .setgoodbye <message>\n\n*Placeholders:*\n• @user - Mention leaving member\n• @group - Group name\n• @desc - Group description\n• @count - Total members\n• @bot - Bot name\n• @time - Current time`);
     }
 
-    const goodbyeMessage = args.join(' ');
     userConfig.GOODBYE_MESSAGE = goodbyeMessage;
     await updateUserConfig(sanitizedNumber, userConfig);
     
-    await reply(`✅ *Goodbye ᴍᴇssᴀɢᴇ sᴇᴛ ᴛᴏ:*\n\n${goodbyeMessage}`);
+    await reply(`✅ *Goodbye message set to:*\n\n${goodbyeMessage}`);
 });
 
 // ===============================
@@ -243,7 +283,7 @@ async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, u
 // ===============================
 cmd({
     pattern: "banlist",
-    alias: ["banlist", "banned"],
+    alias: spaceTolerantAliases("banlist", ["banned"]),
     desc: "Show list of banned users",
     category: "settings",
     react: "📋",
@@ -251,7 +291,7 @@ cmd({
 },
 async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, userConfig, sanitizedNumber }) => {
     if (!isCreator) {
-        return reply("*📛 ᴛʜɪs ɪs ᴀɴ ᴏᴡɴᴇʀ ᴄᴏᴍᴍᴀɴᴅ.*");
+        return reply("*📛 Owner only command.*");
     }
 
     let bannedList = Array.isArray(userConfig.BANNED) ? userConfig.BANNED : [];
@@ -260,7 +300,7 @@ async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, u
         return reply("📋 *No banned users found.*");
     }
 
-    let listText = "*📋 Banned Users List:*\n\n";
+    let listText = "*📋 Banned Users:*\n\n";
     for (let i = 0; i < bannedList.length; i++) {
         const user = bannedList[i];
         const userNumber = extractNumber(user);
@@ -275,7 +315,7 @@ async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, u
 // ===============================
 cmd({
     pattern: "ban",
-    alias: ["ban"],
+    alias: spaceTolerantAliases("ban"),
     desc: "Ban a user from using the bot",
     category: "settings",
     react: "🔨",
@@ -283,16 +323,17 @@ cmd({
 },
 async (conn, mek, m, { from, reply, isCreator, args, updateUserConfig, userConfig, sanitizedNumber }) => {
     if (!isCreator) {
-        return reply("*📛 ᴛʜɪs ɪs ᴀɴ ᴏᴡɴᴇʀ ᴄᴏᴍᴍᴀɴᴅ.*");
+        return reply("*📛 Owner only command.*");
     }
 
     // Get target JID directly from mentioned or quoted
     let target = m.mentionedJid?.[0] || (m.quoted?.sender ?? null);
 
     // If args provided, check if it's a JID format
-    if (!target && args[0]) {
-        if (args[0].includes('@')) {
-            target = args[0];
+    if (!target) {
+        const argTarget = firstArg(args, "ban");
+        if (argTarget && argTarget.includes('@')) {
+            target = argTarget;
         } else {
             return reply("⚠️ Please mention the user or reply to their message.\n\n*Usage:* .ban @user or reply to user's message");
         }
@@ -307,11 +348,13 @@ async (conn, mek, m, { from, reply, isCreator, args, updateUserConfig, userConfi
         return reply("🤖 I can't ban myself!");
     }
 
-    // Can't ban the owner (use userConfig.OWNER_NUMBER)
-    const ownerJid = userConfig.OWNER_NUMBER || config.OWNER_NUMBER;
-    const ownerWithSuffix = ownerJid.includes('@') ? ownerJid : ownerJid + '@s.whatsapp.net';
-    if (target === ownerWithSuffix) {
-        return reply("👑 Cannot ban the owner!");
+    // Can't ban the owner
+    const ownerJid = userConfig.OWNER_NUMBER || '';
+    if (ownerJid) {
+        const ownerWithSuffix = ownerJid.includes('@') ? ownerJid : ownerJid + '@s.whatsapp.net';
+        if (target === ownerWithSuffix) {
+            return reply("👑 Cannot ban the owner!");
+        }
     }
 
     let bannedList = Array.isArray(userConfig.BANNED) ? [...userConfig.BANNED] : [];
@@ -332,7 +375,7 @@ async (conn, mek, m, { from, reply, isCreator, args, updateUserConfig, userConfi
 // ===============================
 cmd({
     pattern: "unban",
-    alias: ["unban"],
+    alias: spaceTolerantAliases("unban"),
     desc: "Unban a user from using the bot",
     category: "settings",
     react: "🔓",
@@ -340,16 +383,17 @@ cmd({
 },
 async (conn, mek, m, { from, reply, isCreator, args, updateUserConfig, userConfig, sanitizedNumber }) => {
     if (!isCreator) {
-        return reply("*📛 ᴛʜɪs ɪs ᴀɴ ᴏᴡɴᴇʀ ᴄᴏᴍᴍᴀɴᴅ.*");
+        return reply("*📛 Owner only command.*");
     }
 
     // Get target JID directly from mentioned or quoted
     let target = m.mentionedJid?.[0] || (m.quoted?.sender ?? null);
 
     // If args provided, check if it's a JID format
-    if (!target && args[0]) {
-        if (args[0].includes('@')) {
-            target = args[0];
+    if (!target) {
+        const argTarget = firstArg(args, "unban");
+        if (argTarget && argTarget.includes('@')) {
+            target = argTarget;
         } else {
             return reply("⚠️ Please mention the user or reply to their message.\n\n*Usage:* .unban @user or reply to user's message");
         }
@@ -377,7 +421,7 @@ async (conn, mek, m, { from, reply, isCreator, args, updateUserConfig, userConfi
 // ===============================
 cmd({
     pattern: "sudo",
-    alias: ["sudo"],
+    alias: spaceTolerantAliases("sudo"),
     desc: "Add a user to sudo list",
     category: "settings",
     react: "👑",
@@ -385,19 +429,18 @@ cmd({
 },
 async (conn, mek, m, { from, reply, isCreator, args, updateUserConfig, userConfig, sanitizedNumber }) => {
     if (!isCreator) {
-        return reply("*📛 ᴛʜɪs ɪs ᴀɴ ᴏᴡɴᴇʀ ᴄᴏᴍᴍᴀɴᴅ.*");
+        return reply("*📛 Owner only command.*");
     }
 
     // Get target JID directly from mentioned or quoted
     let target = m.mentionedJid?.[0] || (m.quoted?.sender ?? null);
 
     // If args provided, try to match with @lid format
-    if (!target && args[0]) {
-        // Check if args[0] is already a JID format (contains @)
-        if (args[0].includes('@')) {
-            target = args[0];
+    if (!target) {
+        const argTarget = firstArg(args, "sudo");
+        if (argTarget && argTarget.includes('@')) {
+            target = argTarget;
         } else {
-            // Assume it's a number, but WhatsApp uses @lid now
             return reply("⚠️ Please mention the user or reply to their message.\n\n*Usage:* .sudo @user or reply to user's message");
         }
     }
@@ -421,7 +464,7 @@ async (conn, mek, m, { from, reply, isCreator, args, updateUserConfig, userConfi
     userConfig.SUDO = sudoList;
     await updateUserConfig(sanitizedNumber, userConfig);
     
-    await reply(`✅ *User added to sudo list successfully!*\n\nUser: ${target}`);
+    await reply(`✅ *User added to sudo list!*\n\nUser: ${target}`);
 });
 
 // ===============================
@@ -429,7 +472,7 @@ async (conn, mek, m, { from, reply, isCreator, args, updateUserConfig, userConfi
 // ===============================
 cmd({
     pattern: "delsudo",
-    alias: ["delsudo", "removesudo"],
+    alias: spaceTolerantAliases("delsudo", ["removesudo"]),
     desc: "Remove a user from sudo list",
     category: "settings",
     react: "👑",
@@ -437,16 +480,17 @@ cmd({
 },
 async (conn, mek, m, { from, reply, isCreator, args, updateUserConfig, userConfig, sanitizedNumber }) => {
     if (!isCreator) {
-        return reply("*📛 ᴛʜɪs ɪs ᴀɴ ᴏᴡɴᴇʀ ᴄᴏᴍᴍᴀɴᴅ.*");
+        return reply("*📛 Owner only command.*");
     }
 
     // Get target JID directly from mentioned or quoted
     let target = m.mentionedJid?.[0] || (m.quoted?.sender ?? null);
 
     // If args provided, try to match with @lid format
-    if (!target && args[0]) {
-        if (args[0].includes('@')) {
-            target = args[0];
+    if (!target) {
+        const argTarget = firstArg(args, "delsudo", "removesudo");
+        if (argTarget && argTarget.includes('@')) {
+            target = argTarget;
         } else {
             return reply("⚠️ Please mention the user or reply to their message.\n\n*Usage:* .delsudo @user or reply to user's message");
         }
@@ -466,7 +510,7 @@ async (conn, mek, m, { from, reply, isCreator, args, updateUserConfig, userConfi
     userConfig.SUDO = sudoList;
     await updateUserConfig(sanitizedNumber, userConfig);
     
-    await reply(`✅ *User removed from sudo list successfully!*\n\nUser: ${target}`);
+    await reply(`✅ *User removed from sudo list!*\n\nUser: ${target}`);
 });
 
 // ===============================
@@ -474,7 +518,7 @@ async (conn, mek, m, { from, reply, isCreator, args, updateUserConfig, userConfi
 // ===============================
 cmd({
     pattern: "listsudo",
-    alias: ["listsudo", "sudoers"],
+    alias: spaceTolerantAliases("listsudo", ["sudoers"]),
     desc: "Show list of sudo users",
     category: "settings",
     react: "📋",
@@ -482,7 +526,7 @@ cmd({
 },
 async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, userConfig, sanitizedNumber }) => {
     if (!isCreator) {
-        return reply("*📛 ᴛʜɪs ɪs ᴀɴ ᴏᴡɴᴇʀ ᴄᴏᴍᴍᴀɴᴅ.*");
+        return reply("*📛 Owner only command.*");
     }
 
     let sudoList = Array.isArray(userConfig.SUDO) ? userConfig.SUDO : [];
@@ -491,7 +535,7 @@ async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, u
         return reply("📋 *No sudo users found.*");
     }
 
-    let listText = "*📋 Sudo Users List:*\n\n";
+    let listText = "*📋 Sudo Users:*\n\n";
     for (let i = 0; i < sudoList.length; i++) {
         const user = sudoList[i];
         const userNumber = extractNumber(user);
@@ -506,7 +550,7 @@ async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, u
 // ===============================
 cmd({
     pattern: "antiedit",
-    alias: ["antiedit"],
+    alias: spaceTolerantAliases("antiedit"),
     desc: "Toggle anti-edit feature (detects and shows edited messages)",
     category: "settings",
     react: "✏️",
@@ -514,23 +558,24 @@ cmd({
 },
 async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, userConfig, sanitizedNumber }) => {
     if (!isCreator) {
-        return reply("*📛 ᴛʜɪs ɪs ᴀɴ ᴏᴡɴᴇʀ ᴄᴏᴍᴍᴀɴᴅ.*");
+        return reply("*📛 Owner only command.*");
     }
 
-    if (!args[0]) {
-        return reply(`📌 *Usᴀɢᴇ:* antiedit on/off\n*Cᴜʀʀᴇɴᴛ:* ${userConfig.ANTI_EDIT}\n\n*Eᴅɪᴛ Pᴀᴛʜ:* ${userConfig.ANTIEDIT_PATH || 'inbox'}\n\n*Tᴏ ᴄʜᴀɴɢᴇ ᴇᴅɪᴛ ᴘᴀᴛʜ ᴜsᴇ:*.editpath <inbox/same>`);
+    const value = firstArg(args, "antiedit").toLowerCase();
+
+    if (!value) {
+        return reply(`📌 *Usage:* .antiedit on/off\n*Current:* ${pretty(userConfig.ANTI_EDIT)}\n*Edit path:* ${userConfig.ANTIEDIT_PATH || 'inbox'}\n\n*To change edit path use:* .editpath <inbox/same>`);
     }
 
-    const value = args[0].toLowerCase();
     if (value !== 'on' && value !== 'off') {
-        return reply('❌ *Pʟᴇᴀsᴇ ᴜsᴇ:* on ᴏʀ off');
+        return reply('❌ *Please use:* on or off');
     }
 
     const newValue = value === 'on' ? 'true' : 'false';
     userConfig.ANTI_EDIT = newValue;
     await updateUserConfig(sanitizedNumber, userConfig);
     
-    await reply(`✅ *Aɴᴛɪ-ᴇᴅɪᴛ sᴇᴛ ᴛᴏ:* ${newValue}\n*Eᴅɪᴛ ᴘᴀᴛʜ:* ${userConfig.ANTIEDIT_PATH || 'inbox'}`);
+    await reply(`✅ *Anti-Edit:* ${pretty(newValue)}\n*Edit path:* ${userConfig.ANTIEDIT_PATH || 'inbox'}`);
 });
 
 // ===============================
@@ -538,7 +583,7 @@ async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, u
 // ===============================
 cmd({
     pattern: "editpath",
-    alias: ["editpath"],
+    alias: spaceTolerantAliases("editpath"),
     desc: "Set where to show edited messages\n\n*Options:*\n• inbox - Send in inbox (default)\n• same - Send in the same chat where message was edited",
     category: "settings",
     react: "📍",
@@ -546,22 +591,23 @@ cmd({
 },
 async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, userConfig, sanitizedNumber }) => {
     if (!isCreator) {
-        return reply("*📛 ᴛʜɪs ɪs ᴀɴ ᴏᴡɴᴇʀ ᴄᴏᴍᴍᴀɴᴅ.*");
+        return reply("*📛 Owner only command.*");
     }
 
-    if (!args[0]) {
-        return reply(`📌 *Usᴀɢᴇ:* editpath inbox/same\n*Cᴜʀʀᴇɴᴛ ᴘᴀᴛʜ:* ${userConfig.ANTIEDIT_PATH || 'inbox'}\n\n*Oᴘᴛɪᴏɴs:*\n• inbox - Send edited message notification in inbox\n• same - Send edited message notification in the same chat`);
+    const value = firstArg(args, "editpath").toLowerCase();
+
+    if (!value) {
+        return reply(`📌 *Usage:* .editpath inbox/same\n*Current path:* ${userConfig.ANTIEDIT_PATH || 'inbox'}\n\n*Options:*\n• inbox - Edited message notification in inbox\n• same - Edited message notification in the same chat`);
     }
 
-    const value = args[0].toLowerCase();
     if (value !== 'inbox' && value !== 'same') {
-        return reply('❌ *Pʟᴇᴀsᴇ ᴜsᴇ:* inbox ᴏʀ same');
+        return reply('❌ *Please use:* inbox or same');
     }
 
     userConfig.ANTIEDIT_PATH = value;
     await updateUserConfig(sanitizedNumber, userConfig);
     
-    await reply(`✅ *Eᴅɪᴛ ᴘᴀᴛʜ sᴇᴛ ᴛᴏ:* ${value}\n*Aɴᴛɪ-ᴇᴅɪᴛ sᴛᴀᴛᴜs:* ${userConfig.ANTI_EDIT || 'false'}`);
+    await reply(`✅ *Edit path:* ${value}\n*Anti-Edit status:* ${pretty(userConfig.ANTI_EDIT)}`);
 });
 
 // ===============================
@@ -569,7 +615,7 @@ async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, u
 // ===============================
 cmd({
     pattern: "autoread",
-    alias: ["autoread", "readmsg", "autoreadmsg"],
+    alias: spaceTolerantAliases("autoread", ["readmsg", "autoreadmsg"]),
     desc: "Toggle auto-read messages feature",
     category: "settings",
     react: "👁️",
@@ -577,31 +623,32 @@ cmd({
 },
 async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, userConfig, sanitizedNumber }) => {
     if (!isCreator) {
-        return reply("*📛 ᴛʜɪs ɪs ᴀɴ ᴏᴡɴᴇʀ ᴄᴏᴍᴍᴀɴᴅ.*");
+        return reply("*📛 Owner only command.*");
     }
 
-    if (!args[0]) {
-        return reply(`📌 *Usᴀɢᴇ:* autoread on/off\n*Cᴜʀʀᴇɴᴛ:* ${userConfig.READ_MESSAGE || 'false'}\n\n*Wʜᴇɴ ᴇɴᴀʙʟᴇᴅ, ᴛʜᴇ ʙᴏᴛ ᴡɪʟʟ ᴀᴜᴛᴏᴍᴀᴛɪᴄᴀʟʟʏ ᴍᴀʀᴋ ᴍᴇssᴀɢᴇs ᴀs ʀᴇᴀᴅ.*`);
+    const value = firstArg(args, "autoread", "readmsg", "autoreadmsg").toLowerCase();
+
+    if (!value) {
+        return reply(`📌 *Usage:* .autoread on/off\n*Current:* ${pretty(userConfig.READ_MESSAGE)}\n\n*When enabled, the bot will automatically mark messages as read.*`);
     }
 
-    const value = args[0].toLowerCase();
     if (value !== 'on' && value !== 'off') {
-        return reply('❌ *Pʟᴇᴀsᴇ ᴜsᴇ:* on ᴏʀ off');
+        return reply('❌ *Please use:* on or off');
     }
 
     const newValue = value === 'on' ? 'true' : 'false';
     userConfig.READ_MESSAGE = newValue;
     await updateUserConfig(sanitizedNumber, userConfig);
     
-    await reply(`✅ *Aᴜᴛᴏ-ʀᴇᴀᴅ sᴇᴛ ᴛᴏ:* ${newValue}\n\n${newValue === 'true' ? '🔵 Bot will now automatically mark messages as read.' : '⚪ Bot will not automatically mark messages as read.'}`);
+    await reply(`✅ *Auto-Read:* ${pretty(newValue)}\n\n${newValue === 'true' ? '🔵 Bot will now automatically mark messages as read.' : '⚪ Bot will not automatically mark messages as read.'}`);
 });
 
 // ===============================
-// ANTI LINK COMMAND - FIXED
+// ANTI LINK COMMAND
 // ===============================
 cmd({
     pattern: "antilink",
-    alias: ["linkblock"],
+    alias: spaceTolerantAliases("antilink", ["linkblock"]),
     desc: "Toggle anti-link protection\n\n*Options:*\n• on - Delete + kick immediately\n• warn - Warn first, kick on 2nd offense\n• delete - Only delete messages\n• off - Disable",
     category: "settings",
     react: "🚫",
@@ -609,15 +656,16 @@ cmd({
 },
 async (conn, mek, m, { from, reply, isCreator, args, updateUserConfig, userConfig, sanitizedNumber }) => {
     if (!isCreator) {
-        return reply("*📛 ᴛʜɪs ɪs ᴀɴ ᴏᴡɴᴇʀ ᴄᴏᴍᴍᴀɴᴅ.*");
+        return reply("*📛 Owner only command.*");
     }
 
-    if (!args[0]) {
+    const value = firstArg(args, "antilink", "linkblock").toLowerCase();
+
+    if (!value) {
         const current = userConfig.ANTI_LINK || 'off';
-        return reply(`📌 *Usᴀɢᴇ:* antilink on/off/warn/delete\n*Cᴜʀʀᴇɴᴛ:* ${current}\n\n*Oᴘᴛɪᴏɴs:*\n• on - Delete + kick immediately\n• warn - Warn first, kick on 2nd offense\n• delete - Only delete messages, no kick\n• off - Disable anti-link`);
+        return reply(`📌 *Usage:* .antilink on/off/warn/delete\n*Current:* ${current}\n\n*Options:*\n• on - Delete + kick immediately\n• warn - Warn first, kick on 2nd offense\n• delete - Only delete messages, no kick\n• off - Disable anti-link`);
     }
 
-    const value = args[0].toLowerCase();
     if (!['on', 'off', 'warn', 'delete', 'kick'].includes(value)) {
         return reply("❌ Please use: on, off, warn, or delete");
     }
@@ -627,16 +675,16 @@ async (conn, mek, m, { from, reply, isCreator, args, updateUserConfig, userConfi
 
     if (value === "on" || value === "kick") {
         configValue = "true";
-        responseMsg = "✅ Anti-link set to ON\n\nLink messages will be deleted and the sender removed immediately.";
+        responseMsg = "✅ *Anti-Link:* ON\n\nLink messages will be deleted and the sender removed immediately.";
     } else if (value === "off") {
         configValue = "false";
-        responseMsg = "✅ Anti-link set to OFF\n\nNo link protection active.";
+        responseMsg = "✅ *Anti-Link:* OFF\n\nNo link protection active.";
     } else if (value === "warn") {
         configValue = "warn";
-        responseMsg = "✅ Anti-link set to WARN\n\nFirst link = warning, second link = removed from group.";
+        responseMsg = "✅ *Anti-Link:* WARN\n\nFirst link = warning, second link = removed from group.";
     } else if (value === "delete") {
         configValue = "delete";
-        responseMsg = "✅ Anti-link set to DELETE\n\nLink messages will be deleted, no warning or kick.";
+        responseMsg = "✅ *Anti-Link:* DELETE\n\nLink messages will be deleted, no warning or kick.";
     }
 
     await updateUserConfig(sanitizedNumber, { ANTI_LINK: configValue });
@@ -647,7 +695,7 @@ async (conn, mek, m, { from, reply, isCreator, args, updateUserConfig, userConfi
 // ===============================
 cmd({
     pattern: "antidelete",
-    alias: ["antidel", "delblock"],
+    alias: spaceTolerantAliases("antidelete", ["antidel", "delblock"]),
     desc: "Toggle anti-delete message protection",
     category: "settings",
     react: "🗑️",
@@ -655,23 +703,24 @@ cmd({
 },
 async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, userConfig, sanitizedNumber }) => {
     if (!isCreator) {
-        return reply("*📛 ᴛʜɪs ɪs ᴀɴ ᴏᴡɴᴇʀ ᴄᴏᴍᴍᴀɴᴅ.*");
+        return reply("*📛 Owner only command.*");
     }
 
-    if (!args[0]) {
-        return reply(`📌 *Usᴀɢᴇ:* antidelete on/off\n*Cᴜʀʀᴇɴᴛ:* ${userConfig.ANTI_DELETE || 'false'}`);
+    const value = firstArg(args, "antidelete", "antidel", "delblock").toLowerCase();
+
+    if (!value) {
+        return reply(`📌 *Usage:* .antidelete on/off\n*Current:* ${pretty(userConfig.ANTI_DELETE)}`);
     }
 
-    const value = args[0].toLowerCase();
     if (value !== 'on' && value !== 'off') {
-        return reply('❌ *Pʟᴇᴀsᴇ ᴜsᴇ:* on ᴏʀ off');
+        return reply('❌ *Please use:* on or off');
     }
 
     const newValue = value === 'on' ? 'true' : 'false';
     userConfig.ANTI_DELETE = newValue;
     await updateUserConfig(sanitizedNumber, userConfig);
     
-    await reply(`✅ *Aɴᴛɪ Dᴇʟᴇᴛᴇ sᴇᴛ ᴛᴏ:* ${newValue}\n\nWhen ON: Bot will detect and notify when messages are deleted.`);
+    await reply(`✅ *Anti-Delete:* ${pretty(newValue)}\n\nWhen ON: Bot will detect and notify when messages are deleted.`);
 });
 
 // ===============================
@@ -679,7 +728,7 @@ async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, u
 // ===============================
 cmd({
     pattern: "recording",
-    alias: ["autorecording"],
+    alias: spaceTolerantAliases("recording", ["autorecording"]),
     desc: "Toggle auto recording presence",
     category: "settings",
     react: "🎙️",
@@ -687,23 +736,24 @@ cmd({
 },
 async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, userConfig, sanitizedNumber }) => {
     if (!isCreator) {
-        return reply("*📛 ᴛʜɪs ɪs ᴀɴ ᴏᴡɴᴇʀ ᴄᴏᴍᴍᴀɴᴅ.*");
+        return reply("*📛 Owner only command.*");
     }
 
-    if (!args[0]) {
-        return reply(`📌 *Usᴀɢᴇ:* autorecord on/off\n*Cᴜʀʀᴇɴᴛ:* ${userConfig.AUTO_RECORDING}`);
+    const value = firstArg(args, "recording", "autorecording").toLowerCase();
+
+    if (!value) {
+        return reply(`📌 *Usage:* .recording on/off\n*Current:* ${pretty(userConfig.AUTO_RECORDING)}`);
     }
 
-    const value = args[0].toLowerCase();
     if (value !== 'on' && value !== 'off') {
-        return reply('❌ *Pʟᴇᴀsᴇ ᴜsᴇ:* on ᴏʀ off');
+        return reply('❌ *Please use:* on or off');
     }
 
     const newValue = value === 'on' ? 'true' : 'false';
     userConfig.AUTO_RECORDING = newValue;
     await updateUserConfig(sanitizedNumber, userConfig);
     
-    await reply(`✅ *Aᴜᴛᴏ Rᴇᴄᴏʀᴅɪɴɢ sᴇᴛ ᴛᴏ:* ${newValue}`);
+    await reply(`✅ *Auto Recording:* ${pretty(newValue)}`);
 });
 
 // ===============================
@@ -711,7 +761,7 @@ async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, u
 // ===============================
 cmd({
     pattern: "statusview",
-    alias: ["autoview"],
+    alias: spaceTolerantAliases("statusview", ["autoview"]),
     desc: "Toggle auto view status",
     category: "settings",
     react: "👁️",
@@ -719,23 +769,24 @@ cmd({
 },
 async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, userConfig, sanitizedNumber }) => {
     if (!isCreator) {
-        return reply("*📛 ᴛʜɪs ɪs ᴀɴ ᴏᴡɴᴇʀ ᴄᴏᴍᴍᴀɴᴅ.*");
+        return reply("*📛 Owner only command.*");
     }
 
-    if (!args[0]) {
-        return reply(`📌 *Usᴀɢᴇ:* autoview on/off\n*Cᴜʀʀᴇɴᴛ:* ${userConfig.AUTO_VIEW_STATUS}`);
+    const value = firstArg(args, "statusview", "autoview").toLowerCase();
+
+    if (!value) {
+        return reply(`📌 *Usage:* .statusview on/off\n*Current:* ${pretty(userConfig.AUTO_VIEW_STATUS)}`);
     }
 
-    const value = args[0].toLowerCase();
     if (value !== 'on' && value !== 'off') {
-        return reply('❌ *Pʟᴇᴀsᴇ ᴜsᴇ:* on ᴏʀ off');
+        return reply('❌ *Please use:* on or off');
     }
 
     const newValue = value === 'on' ? 'true' : 'false';
     userConfig.AUTO_VIEW_STATUS = newValue;
     await updateUserConfig(sanitizedNumber, userConfig);
     
-    await reply(`✅ *Aᴜᴛᴏ Vɪᴇᴡ Sᴛᴀᴛᴜs sᴇᴛ ᴛᴏ:* ${newValue}`);
+    await reply(`✅ *Auto View Status:* ${pretty(newValue)}`);
 });
 
 // ===============================
@@ -743,7 +794,7 @@ async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, u
 // ===============================
 cmd({
     pattern: "autoreact",
-    alias: ["autoreaction", "reactauto"],
+    alias: spaceTolerantAliases("autoreact", ["autoreaction", "reactauto"]),
     desc: "Toggle auto react to messages",
     category: "settings",
     react: "🤖",
@@ -751,23 +802,24 @@ cmd({
 },
 async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, userConfig, sanitizedNumber }) => {
     if (!isCreator) {
-        return reply("*📛 ᴛʜɪs ɪs ᴀɴ ᴏᴡɴᴇʀ ᴄᴏᴍᴍᴀɴᴅ.*");
+        return reply("*📛 Owner only command.*");
     }
 
-    if (!args[0]) {
-        return reply(`📌 *Usᴀɢᴇ:* autoreact on/off\n*Cᴜʀʀᴇɴᴛ:* ${userConfig.AUTO_REACT}`);
+    const value = firstArg(args, "autoreact", "autoreaction", "reactauto").toLowerCase();
+
+    if (!value) {
+        return reply(`📌 *Usage:* .autoreact on/off\n*Current:* ${pretty(userConfig.AUTO_REACT)}`);
     }
 
-    const value = args[0].toLowerCase();
     if (value !== 'on' && value !== 'off') {
-        return reply('❌ *Pʟᴇᴀsᴇ ᴜsᴇ:* on ᴏʀ off');
+        return reply('❌ *Please use:* on or off');
     }
 
     const newValue = value === 'on' ? 'true' : 'false';
     userConfig.AUTO_REACT = newValue;
     await updateUserConfig(sanitizedNumber, userConfig);
     
-    await reply(`✅ *Aᴜᴛᴏ Rᴇᴀᴄᴛ sᴇᴛ ᴛᴏ:* ${newValue}\n\nBot will ${newValue === 'true' ? 'now' : 'no longer'} automatically react to messages.`);
+    await reply(`✅ *Auto React:* ${pretty(newValue)}\n\nBot will ${newValue === 'true' ? 'now' : 'no longer'} automatically react to messages.`);
 });
 
 // ===============================
@@ -775,7 +827,7 @@ async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, u
 // ===============================
 cmd({
     pattern: "anticall",
-    alias: ["antcall", "callblock"],
+    alias: spaceTolerantAliases("anticall", ["antcall", "callblock"]),
     desc: "Toggle anti-call protection",
     category: "settings",
     react: "📵",
@@ -783,23 +835,24 @@ cmd({
 },
 async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, userConfig, sanitizedNumber }) => {
     if (!isCreator) {
-        return reply("*📛 ᴛʜɪs ɪs ᴀɴ ᴏᴡɴᴇʀ ᴄᴏᴍᴍᴀɴᴅ.*");
+        return reply("*📛 Owner only command.*");
     }
 
-    if (!args[0]) {
-        return reply(`📌 *Usᴀɢᴇ:* anticall on/off\n*Cᴜʀʀᴇɴᴛ:* ${userConfig.ANTI_CALL || 'false'}`);
+    const value = firstArg(args, "anticall", "antcall", "callblock").toLowerCase();
+
+    if (!value) {
+        return reply(`📌 *Usage:* .anticall on/off\n*Current:* ${pretty(userConfig.ANTI_CALL)}`);
     }
 
-    const value = args[0].toLowerCase();
     if (value !== 'on' && value !== 'off') {
-        return reply('❌ *Pʟᴇᴀsᴇ ᴜsᴇ:* on ᴏʀ off');
+        return reply('❌ *Please use:* on or off');
     }
 
     const newValue = value === 'on' ? 'true' : 'false';
     userConfig.ANTI_CALL = newValue;
     await updateUserConfig(sanitizedNumber, userConfig);
     
-    await reply(`✅ *Aɴᴛɪ-Cᴀʟʟ sᴇᴛ ᴛᴏ:* ${newValue}\n\nWhen ON: Bot will automatically reject incoming calls and send a rejection message.`);
+    await reply(`✅ *Anti-Call:* ${pretty(newValue)}\n\nWhen ON: Bot will automatically reject incoming calls and send a rejection message.`);
 });
 
 // ===============================
@@ -807,7 +860,7 @@ async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, u
 // ===============================
 cmd({
     pattern: "anticallmsg",
-    alias: ["callmsg", "rejectmsg"],
+    alias: spaceTolerantAliases("anticallmsg", ["callmsg", "rejectmsg"]),
     desc: "Set custom anti-call rejection message",
     category: "settings",
     react: "📝",
@@ -815,20 +868,20 @@ cmd({
 },
 async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, userConfig, sanitizedNumber }) => {
     if (!isCreator) {
-        return reply("*📛 ᴛʜɪs ɪs ᴀɴ ᴏᴡɴᴇʀ ᴄᴏᴍᴍᴀɴᴅ.*");
+        return reply("*📛 Owner only command.*");
     }
 
-    if (!args[0]) {
-        const currentMsg = userConfig.REJECT_MSG || config.REJECT_MSG || "*📞 ᴄαℓℓ ɴσт αℓℓσωє∂ ιɴ тнιѕ ɴᴜмвєʀ уσυ ∂σɴт нανє ᴘєʀмιѕѕισɴ 📵*";
-        return reply(`📌 *Cᴜʀʀᴇɴᴛ Rᴇᴊᴇᴄᴛ Mᴇssᴀɢᴇ:*\n${currentMsg}\n\n*Usᴀɢᴇ:* anticallmsg <your message>\n\nExᴀᴍᴘʟᴇ: anticallmsg Calls are not allowed on this number`);
-    }
+    const currentMsg = userConfig.REJECT_MSG || "*📞 Calls are not allowed on this number. You don't have permission 📵*";
+    const newMsg = joinArgs(args, "anticallmsg", "callmsg", "rejectmsg");
 
-    const newMsg = args.join(' ');
+    if (!newMsg) {
+        return reply(`📌 *Current reject message:*\n${currentMsg}\n\n*Usage:* .anticallmsg <your message>\n\n*Example:* .anticallmsg Calls are not allowed on this number`);
+    }
     
     userConfig.REJECT_MSG = newMsg;
     await updateUserConfig(sanitizedNumber, userConfig);
     
-    await reply(`✅ *Aɴᴛɪ-Cᴀʟʟ Rᴇᴊᴇᴄᴛ Mᴇssᴀɢᴇ sᴇᴛ ᴛᴏ:*\n${newMsg}`);
+    await reply(`✅ *Anti-Call reject message set to:*\n${newMsg}`);
 });
 
 // ===============================
@@ -836,7 +889,7 @@ async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, u
 // ===============================
 cmd({
     pattern: "adminaction",
-    alias: ["adminnotify"],
+    alias: spaceTolerantAliases("adminaction", ["adminnotify"]),
     desc: "Toggle admin action notifications",
     category: "settings",
     react: "👑",
@@ -844,23 +897,24 @@ cmd({
 },
 async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, userConfig, sanitizedNumber }) => {
     if (!isCreator) {
-        return reply("*📛 ᴛʜɪs ɪs ᴀɴ ᴏᴡɴᴇʀ ᴄᴏᴍᴍᴀɴᴅ.*");
+        return reply("*📛 Owner only command.*");
     }
 
-    if (!args[0]) {
-        return reply(`📌 *Usᴀɢᴇ:* adminaction on/off\n*Cᴜʀʀᴇɴᴛ:* ${userConfig.ADMIN_ACTION}`);
+    const value = firstArg(args, "adminaction", "adminnotify").toLowerCase();
+
+    if (!value) {
+        return reply(`📌 *Usage:* .adminaction on/off\n*Current:* ${pretty(userConfig.ADMIN_ACTION)}`);
     }
 
-    const value = args[0].toLowerCase();
     if (value !== 'on' && value !== 'off') {
-        return reply('❌ *Pʟᴇᴀsᴇ ᴜsᴇ:* on ᴏʀ off');
+        return reply('❌ *Please use:* on or off');
     }
 
     const newValue = value === 'on' ? 'true' : 'false';
     userConfig.ADMIN_ACTION = newValue;
     await updateUserConfig(sanitizedNumber, userConfig);
     
-    await reply(`✅ *Aᴅᴍɪɴ Aᴄᴛɪᴏɴ Nᴏᴛɪғɪᴄᴀᴛɪᴏɴs sᴇᴛ ᴛᴏ:* ${newValue}`);
+    await reply(`✅ *Admin Action Notifications:* ${pretty(newValue)}`);
 });
 
 // ===============================
@@ -868,7 +922,7 @@ async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, u
 // ===============================
 cmd({
     pattern: "autotyping",
-    alias: ["typing"],
+    alias: spaceTolerantAliases("autotyping", ["typing"]),
     desc: "Toggle auto typing in chats",
     category: "settings",
     react: "⌨️",
@@ -876,7 +930,7 @@ cmd({
 },
 async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, userConfig, sanitizedNumber }) => {
     if (!isCreator) {
-        return reply("*📛 ᴛʜɪs ɪs ᴀɴ ᴏᴡɴᴇʀ ᴄᴏᴍᴍᴀɴᴅ.*");
+        return reply("*📛 Owner only command.*");
     }
 
     // Auto-typing permanently disabled by request — always kept off,
@@ -886,7 +940,7 @@ async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, u
         await updateUserConfig(sanitizedNumber, userConfig);
     }
 
-    return reply('❌ *Aᴜᴛᴏ Tʏᴘɪɴɢ ɪs ᴘᴇʀᴍᴀɴᴇɴᴛʟʏ ᴅɪsᴀʙʟᴇᴅ.*\n\nYe feature hamesha ke liye off kar diya gaya hai.');
+    return reply('❌ *Auto Typing is permanently disabled.*');
 });
 
 // ===============================
@@ -894,7 +948,7 @@ async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, u
 // ===============================
 cmd({
     pattern: "online",
-    alias: ["alwaysonline", "alwayson"],
+    alias: spaceTolerantAliases("online", ["alwaysonline", "alwayson"]),
     desc: "Toggle always online status",
     category: "settings",
     react: "💚",
@@ -902,23 +956,24 @@ cmd({
 },
 async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, userConfig, sanitizedNumber }) => {
     if (!isCreator) {
-        return reply("*📛 ᴛʜɪs ɪs ᴀɴ ᴏᴡɴᴇʀ ᴄᴏᴍᴍᴀɴᴅ.*");
+        return reply("*📛 Owner only command.*");
     }
 
-    if (!args[0]) {
-        return reply(`📌 *Usᴀɢᴇ:* online on/off\n*Cᴜʀʀᴇɴᴛ:* ${userConfig.ALWAYS_ONLINE || 'false'}`);
+    const value = firstArg(args, "online", "alwaysonline", "alwayson").toLowerCase();
+
+    if (!value) {
+        return reply(`📌 *Usage:* .online on/off\n*Current:* ${pretty(userConfig.ALWAYS_ONLINE)}`);
     }
 
-    const value = args[0].toLowerCase();
     if (value !== 'on' && value !== 'off') {
-        return reply('❌ *Pʟᴇᴀsᴇ ᴜsᴇ:* on ᴏʀ off');
+        return reply('❌ *Please use:* on or off');
     }
 
     const newValue = value === 'on' ? 'true' : 'false';
     userConfig.ALWAYS_ONLINE = newValue;
     await updateUserConfig(sanitizedNumber, userConfig);
     
-    await reply(`✅ *Aʟᴡᴀʏs Oɴʟɪɴᴇ sᴇᴛ ᴛᴏ:* ${newValue}\n\nWhen ON: Bot will always show online status.`);
+    await reply(`✅ *Always Online:* ${pretty(newValue)}\n\nWhen ON: Bot will always show online status.`);
 });
 
 // ===============================
@@ -926,7 +981,7 @@ async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, u
 // ===============================
 cmd({
     pattern: "mode",
-    alias: ["mod"],
+    alias: spaceTolerantAliases("mode", ["mod"]),
     desc: "Change bot mode (public/private/inbox)",
     category: "settings",
     react: "🌐",
@@ -934,16 +989,17 @@ cmd({
 },
 async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, userConfig, sanitizedNumber }) => {
     if (!isCreator) {
-        return reply("*📛 ᴛʜɪs ɪs ᴀɴ ᴏᴡɴᴇʀ ᴄᴏᴍᴍᴀɴᴅ.*");
+        return reply("*📛 Owner only command.*");
     }
 
-    if (!args[0]) {
-        return reply(`📌 *Usᴀɢᴇ:* mode public/private/inbox\n*Cᴜʀʀᴇɴᴛ:* ${userConfig.MODE}`);
+    const mode = firstArg(args, "mode", "mod").toLowerCase();
+
+    if (!mode) {
+        return reply(`📌 *Usage:* .mode public/private/inbox\n*Current:* ${userConfig.MODE || 'public'}`);
     }
 
-    const mode = args[0].toLowerCase();
     if (!['public', 'private', 'inbox'].includes(mode)) {
-        return reply('❌ *Aᴠᴀɪʟᴀʙʟᴇ ᴍᴏᴅᴇs:* public, private, inbox');
+        return reply('❌ *Available modes:* public, private, inbox');
     }
 
     userConfig.MODE = mode;
@@ -955,7 +1011,7 @@ async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, u
         inbox: '💬 Commands work only in private chats'
     };
     
-    await reply(`✅ *Bot mode set to:* ${mode}\n📝 *Description:* ${modeDescriptions[mode]}`);
+    await reply(`✅ *Bot mode:* ${mode}\n📝 *Info:* ${modeDescriptions[mode]}`);
 });
 
 // ===============================
@@ -963,6 +1019,7 @@ async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, u
 // ===============================
 cmd({
     pattern: "prefix",
+    alias: spaceTolerantAliases("prefix"),
     desc: "Change command prefix",
     category: "settings",
     react: "⚡",
@@ -970,22 +1027,23 @@ cmd({
 },
 async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, userConfig, sanitizedNumber }) => {
     if (!isCreator) {
-        return reply("*📛 ᴛʜɪs ɪs ᴀɴ ᴏᴡɴᴇʀ ᴄᴏᴍᴍᴀɴᴅ.*");
+        return reply("*📛 Owner only command.*");
     }
 
-    if (!args[0]) {
-        return reply(`📌 *Usᴀɢᴇ:* prefix <new_prefix>\n*Cᴜʀʀᴇɴᴛ:* ${userConfig.PREFIX}`);
+    const newPrefix = firstArg(args, "prefix");
+
+    if (!newPrefix) {
+        return reply(`📌 *Usage:* .prefix <new_prefix>\n*Current:* ${userConfig.PREFIX}`);
     }
 
-    const newPrefix = args[0];
     if (newPrefix.length > 2) {
-        return reply('❌ *Pʀᴇғɪx ᴍᴜsᴛ ʙᴇ 1-2 ᴄʜᴀʀᴀᴄᴛᴇʀs ᴍᴀx*');
+        return reply('❌ *Prefix must be 1-2 characters max*');
     }
 
     userConfig.PREFIX = newPrefix;
     await updateUserConfig(sanitizedNumber, userConfig);
     
-    await reply(`✅ *Pʀᴇғɪx ᴄʜᴀɴɢᴇᴅ ᴛᴏ:* ${newPrefix}\n\n*Exᴀᴍᴘʟᴇ:* ${newPrefix}menu`);
+    await reply(`✅ *Prefix changed to:* ${newPrefix}\n\n*Example:* ${newPrefix}menu`);
 });
 
 // ===============================
@@ -993,7 +1051,7 @@ async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, u
 // ===============================
 cmd({
     pattern: "botname",
-    alias: ["name"],
+    alias: spaceTolerantAliases("botname", ["name"]),
     desc: "Change bot name",
     category: "settings",
     react: "🤖",
@@ -1001,22 +1059,23 @@ cmd({
 },
 async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, userConfig, sanitizedNumber }) => {
     if (!isCreator) {
-        return reply("*📛 ᴛʜɪs ɪs ᴀɴ ᴏᴡɴᴇʀ ᴄᴏᴍᴍᴀɴᴅ.*");
+        return reply("*📛 Owner only command.*");
     }
 
-    if (!args[0]) {
-        return reply(`📌 *Usᴀɢᴇ:* botname <new_name>\n*Cᴜʀʀᴇɴᴛ:* ${userConfig.BOT_NAME || config.BOT_NAME}`);
+    const newName = joinArgs(args, "botname", "name");
+
+    if (!newName) {
+        return reply(`📌 *Usage:* .botname <new_name>\n*Current:* ${userConfig.BOT_NAME || 'Not set'}`);
     }
 
-    const newName = args.join(' ');
     if (newName.length > 30) {
-        return reply('❌ *Bᴏᴛ ɴᴀᴍᴇ ᴍᴜsᴛ ʙᴇ ᴜɴᴅᴇʀ 30 ᴄʜᴀʀᴀᴄᴛᴇʀs*');
+        return reply('❌ *Bot name must be under 30 characters*');
     }
 
     userConfig.BOT_NAME = newName;
     await updateUserConfig(sanitizedNumber, userConfig);
     
-    await reply(`✅ *Bᴏᴛ ɴᴀᴍᴇ sᴇᴛ ᴛᴏ:* ${newName}`);
+    await reply(`✅ *Bot name set to:* ${newName}`);
 });
 
 // ===============================
@@ -1024,7 +1083,7 @@ async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, u
 // ===============================
 cmd({
     pattern: "ownername",
-    alias: ["owner"],
+    alias: spaceTolerantAliases("ownername", ["owner"]),
     desc: "Change owner name",
     category: "settings",
     react: "👑",
@@ -1032,22 +1091,23 @@ cmd({
 },
 async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, userConfig, sanitizedNumber }) => {
     if (!isCreator) {
-        return reply("*📛 ᴛʜɪs ɪs ᴀɴ ᴏᴡɴᴇʀ ᴄᴏᴍᴍᴀɴᴅ.*");
+        return reply("*📛 Owner only command.*");
     }
 
-    if (!args[0]) {
-        return reply(`📌 *Usᴀɢᴇ:* ownername <new_name>\n*Cᴜʀʀᴇɴᴛ:* ${userConfig.OWNER_NAME || config.OWNER_NAME}`);
+    const newName = joinArgs(args, "ownername", "owner");
+
+    if (!newName) {
+        return reply(`📌 *Usage:* .ownername <new_name>\n*Current:* ${userConfig.OWNER_NAME || 'Not set'}`);
     }
 
-    const newName = args.join(' ');
     if (newName.length > 30) {
-        return reply('❌ *Oᴡɴᴇʀ ɴᴀᴍᴇ ᴍᴜsᴛ ʙᴇ ᴜɴᴅᴇʀ 30 ᴄʜᴀʀᴀᴄᴛᴇʀs*');
+        return reply('❌ *Owner name must be under 30 characters*');
     }
 
     userConfig.OWNER_NAME = newName;
     await updateUserConfig(sanitizedNumber, userConfig);
     
-    await reply(`✅ *Oᴡɴᴇʀ ɴᴀᴍᴇ sᴇᴛ ᴛᴏ:* ${newName}`);
+    await reply(`✅ *Owner name set to:* ${newName}`);
 });
 
 // ===============================
@@ -1055,7 +1115,7 @@ async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, u
 // ===============================
 cmd({
     pattern: "ownernumber",
-    alias: ["ownernum", "ownerphone"],
+    alias: spaceTolerantAliases("ownernumber", ["ownernum", "ownerphone"]),
     desc: "Change owner number",
     category: "settings",
     react: "📞",
@@ -1063,22 +1123,23 @@ cmd({
 },
 async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, userConfig, sanitizedNumber }) => {
     if (!isCreator) {
-        return reply("*📛 ᴛʜɪs ɪs ᴀɴ ᴏᴡɴᴇʀ ᴄᴏᴍᴍᴀɴᴅ.*");
+        return reply("*📛 Owner only command.*");
     }
 
-    if (!args[0]) {
-        return reply(`📌 *Usᴀɢᴇ:* ownernumber <new_number>\n*Cᴜʀʀᴇɴᴛ:* ${userConfig.OWNER_NUMBER || config.OWNER_NUMBER}`);
+    const newNumber = firstArg(args, "ownernumber", "ownernum", "ownerphone");
+
+    if (!newNumber) {
+        return reply(`📌 *Usage:* .ownernumber <new_number>\n*Current:* ${userConfig.OWNER_NUMBER || 'Not set'}`);
     }
 
-    const newNumber = args[0];
     if (!newNumber.match(/^\d{10,15}$/)) {
-        return reply('❌ *Pʟᴇᴀsᴇ ᴇɴᴛᴇʀ ᴀ ᴠᴀʟɪᴅ ᴘʜᴏɴᴇ ɴᴜᴍʙᴇʀ (10-15 ᴅɪɢɪᴛs)*');
+        return reply('❌ *Please enter a valid phone number (10-15 digits)*');
     }
 
     userConfig.OWNER_NUMBER = newNumber;
     await updateUserConfig(sanitizedNumber, userConfig);
     
-    await reply(`✅ *Oᴡɴᴇʀ ɴᴜᴍʙᴇʀ sᴇᴛ ᴛᴏ:* ${newNumber}`);
+    await reply(`✅ *Owner number set to:* ${newNumber}`);
 });
 
 // ===============================
@@ -1086,7 +1147,7 @@ async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, u
 // ===============================
 cmd({
     pattern: "description",
-    alias: ["desc", "about"],
+    alias: spaceTolerantAliases("description", ["desc", "about"]),
     desc: "Change bot description",
     category: "settings",
     react: "📝",
@@ -1094,22 +1155,23 @@ cmd({
 },
 async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, userConfig, sanitizedNumber }) => {
     if (!isCreator) {
-        return reply("*📛 ᴛʜɪs ɪs ᴀɴ ᴏᴡɴᴇʀ ᴄᴏᴍᴍᴀɴᴅ.*");
+        return reply("*📛 Owner only command.*");
     }
 
-    if (!args[0]) {
-        return reply(`📌 *Usᴀɢᴇ:* description <new_description>\n*Cᴜʀʀᴇɴᴛ:* ${userConfig.DESCRIPTION || config.DESCRIPTION}`);
+    const newDesc = joinArgs(args, "description", "desc", "about");
+
+    if (!newDesc) {
+        return reply(`📌 *Usage:* .description <new_description>\n*Current:* ${userConfig.DESCRIPTION || 'Not set'}`);
     }
 
-    const newDesc = args.join(' ');
     if (newDesc.length > 200) {
-        return reply('❌ *Dᴇsᴄʀɪᴘᴛɪᴏɴ ᴍᴜsᴛ ʙᴇ ᴜɴᴅᴇʀ 200 ᴄʜᴀʀᴀᴄᴛᴇʀs*');
+        return reply('❌ *Description must be under 200 characters*');
     }
 
     userConfig.DESCRIPTION = newDesc;
     await updateUserConfig(sanitizedNumber, userConfig);
     
-    await reply(`✅ *Bᴏᴛ ᴅᴇsᴄʀɪᴘᴛɪᴏɴ sᴇᴛ ᴛᴏ:* ${newDesc}`);
+    await reply(`✅ *Bot description set to:* ${newDesc}`);
 });
 
 // ===============================
@@ -1117,7 +1179,7 @@ async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, u
 // ===============================
 cmd({
     pattern: "stickername",
-    alias: ["stickertext", "stname"],
+    alias: spaceTolerantAliases("stickername", ["stickertext", "stname"]),
     desc: "Set sticker pack name",
     category: "settings",
     react: "🖼️",
@@ -1125,20 +1187,20 @@ cmd({
 },
 async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, userConfig, sanitizedNumber }) => {
     if (!isCreator) {
-        return reply("*📛 ᴛʜɪs ɪs ᴀɴ ᴏᴡɴᴇʀ ᴄᴏᴍᴍᴀɴᴅ.*");
+        return reply("*📛 Owner only command.*");
     }
 
-    if (!args[0]) {
+    const stickerName = joinArgs(args, "stickername", "stickertext", "stname");
+
+    if (!stickerName) {
         const currentName = userConfig.STICKER_NAME || 'Sticker Pack';
-        return reply(`📌 *Usᴀɢᴇ:*.stickername Your Pack Name\n*Cᴜʀʀᴇɴᴛ:* ${currentName}`);
+        return reply(`📌 *Usage:* .stickername Your Pack Name\n*Current:* ${currentName}`);
     }
-
-    const stickerName = args.join(' ');
     
     userConfig.STICKER_NAME = stickerName;
     await updateUserConfig(sanitizedNumber, userConfig);
     
-    await reply(`✅ *Sᴛɪᴄᴋᴇʀ ᴘᴀᴄᴋ ɴᴀᴍᴇ sᴇᴛ ᴛᴏ:* ${stickerName}`);
+    await reply(`✅ *Sticker pack name set to:* ${stickerName}`);
 });
 
 // ===============================
@@ -1146,7 +1208,7 @@ async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, u
 // ===============================
 cmd({
     pattern: "delpath",
-    alias: ["deletepath", "antideletepath"],
+    alias: spaceTolerantAliases("delpath", ["deletepath", "antideletepath"]),
     desc: "Set anti-delete path (same/inbox)",
     category: "settings",
     react: "🗑️",
@@ -1154,22 +1216,23 @@ cmd({
 },
 async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, userConfig, sanitizedNumber }) => {
     if (!isCreator) {
-        return reply("*📛 ᴛʜɪs ɪs ᴀɴ ᴏᴡɴᴇʀ ᴄᴏᴍᴍᴀɴᴅ.*");
+        return reply("*📛 Owner only command.*");
     }
 
-    if (!args[0]) {
-        return reply(`📌 *Usᴀɢᴇ:*.delpath same/inbox\n*Cᴜʀʀᴇɴᴛ:* ${userConfig.ANTI_DELETE_PATH || 'inbox'}`);
+    const value = firstArg(args, "delpath", "deletepath", "antideletepath").toLowerCase();
+
+    if (!value) {
+        return reply(`📌 *Usage:* .delpath same/inbox\n*Current:* ${userConfig.ANTI_DELETE_PATH || 'inbox'}`);
     }
 
-    const value = args[0].toLowerCase();
     if (value !== 'same' && value !== 'inbox') {
-        return reply('❌ *Pʟᴇᴀsᴇ ᴜsᴇ:* same ᴏʀ inbox\n- *same*: Delete from same chat\n- *inbox*: Delete only from inbox');
+        return reply('❌ *Please use:* same or inbox\n• *same* - Delete from same chat\n• *inbox* - Delete only from inbox');
     }
 
     userConfig.ANTI_DELETE_PATH = value;
     await updateUserConfig(sanitizedNumber, userConfig);
     
-    await reply(`✅ *Aɴᴛɪ-ᴅᴇʟᴇᴛᴇ ᴘᴀᴛʜ sᴇᴛ ᴛᴏ:* ${value}`);
+    await reply(`✅ *Anti-Delete path:* ${value}`);
 });
 
 // ===============================
@@ -1177,7 +1240,7 @@ async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, u
 // ===============================
 cmd({
     pattern: "reactemojis",
-    alias: ["reacts", "reactset"],
+    alias: spaceTolerantAliases("reactemojis", ["reacts", "reactset"]),
     desc: "Set auto react emojis",
     category: "settings",
     react: "😍",
@@ -1185,20 +1248,20 @@ cmd({
 },
 async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, userConfig, sanitizedNumber }) => {
     if (!isCreator) {
-        return reply("*📛 ᴛʜɪs ɪs ᴀɴ ᴏᴡɴᴇʀ ᴄᴏᴍᴍᴀɴᴅ.*");
+        return reply("*📛 Owner only command.*");
     }
 
-    if (!args[0]) {
+    const input = joinArgs(args, "reactemojis", "reacts", "reactset");
+
+    if (!input) {
         const currentEmojis = userConfig.REACT_EMOJIS || ['😍', '❤️', '🔥', '👏', '😮', '😢', '🤣', '👍', '🎉', '🤔', '🙏', '😊', '🥰', '💕', '🤩', '✨', '😎', '🥳', '🙌'];
-        return reply(`📌 *Usᴀɢᴇ:*.reactemojis 😍,❤️,🔥,👏,😮\n*Cᴜʀʀᴇɴᴛ:* ${currentEmojis.join(', ')}`);
+        return reply(`📌 *Usage:* .reactemojis 😍,❤️,🔥,👏,😮\n*Current:* ${currentEmojis.join(', ')}`);
     }
-
-    const input = args.join(' ');
     
     const consecutiveEmojisRegex = /[\p{Emoji}\u200d]+(?![,])[\p{Emoji}\u200d]+/gu;
     
     if (consecutiveEmojisRegex.test(input)) {
-        return reply('❌ *Invalid format! Please separate all emojis with commas*\n*Example:*.reactemojis 😍,❤️,🔥,👏,😮');
+        return reply('❌ *Invalid format! Please separate all emojis with commas*\n*Example:* .reactemojis 😍,❤️,🔥,👏,😮');
     }
     
     const emojis = input.split(',').map(e => e.trim()).filter(e => e);
@@ -1215,7 +1278,7 @@ async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, u
     });
     
     if (invalidEntries.length > 0) {
-        return reply('❌ *Invalid format! Don\'t use multiple emojis without commas*\n*Example:*.reactemojis 😍,❤️,🔥,👏,😮');
+        return reply('❌ *Invalid format! Don\'t use multiple emojis without commas*\n*Example:* .reactemojis 😍,❤️,🔥,👏,😮');
     }
     
     if (emojis.length === 0) {
@@ -1233,7 +1296,7 @@ async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, u
 // ===============================
 cmd({
     pattern: "owneremojis",
-    alias: ["owneremojiset", "ownerreacts"],
+    alias: spaceTolerantAliases("owneremojis", ["owneremojiset", "ownerreacts"]),
     desc: "Set owner emojis for reactions",
     category: "settings",
     react: "👑",
@@ -1241,20 +1304,20 @@ cmd({
 },
 async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, userConfig, sanitizedNumber }) => {
     if (!isCreator) {
-        return reply("*📛 ᴛʜɪs ɪs ᴀɴ ᴏᴡɴᴇʀ ᴄᴏᴍᴍᴀɴᴅ.*");
+        return reply("*📛 Owner only command.*");
     }
 
-    if (!args[0]) {
+    const input = joinArgs(args, "owneremojis", "owneremojiset", "ownerreacts");
+
+    if (!input) {
         const currentEmojis = userConfig.OWNER_EMOJIS || ['👑', '⭐', '💎', '🌟', '✨', '⚡', '🔥', '❤️', '💕', '🎯'];
-        return reply(`📌 *Usᴀɢᴇ:*.owneremojis 👑,⭐,💎,🌟,✨\n*Cᴜʀʀᴇɴᴛ:* ${currentEmojis.join(', ')}`);
+        return reply(`📌 *Usage:* .owneremojis 👑,⭐,💎,🌟,✨\n*Current:* ${currentEmojis.join(', ')}`);
     }
-
-    const input = args.join(' ');
     
     const consecutiveEmojisRegex = /[\p{Emoji}\u200d]+(?![,])[\p{Emoji}\u200d]+/gu;
     
     if (consecutiveEmojisRegex.test(input)) {
-        return reply('❌ *Invalid format! Please separate all emojis with commas*\n*Example:*.owneremojis 👑,⭐,💎,🌟,✨');
+        return reply('❌ *Invalid format! Please separate all emojis with commas*\n*Example:* .owneremojis 👑,⭐,💎,🌟,✨');
     }
     
     const emojis = input.split(',').map(e => e.trim()).filter(e => e);
@@ -1271,7 +1334,7 @@ async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, u
     });
     
     if (invalidEntries.length > 0) {
-        return reply('❌ *Invalid format! Don\'t use multiple emojis without commas*\n*Example:*.owneremojis 👑,⭐,💎,🌟,✨');
+        return reply('❌ *Invalid format! Don\'t use multiple emojis without commas*\n*Example:* .owneremojis 👑,⭐,💎,🌟,✨');
     }
     
     if (emojis.length === 0) {
@@ -1289,7 +1352,7 @@ async (conn, mek, m, { from, reply, isCreator, args, prefix, updateUserConfig, u
 // ===============================
 cmd({
     pattern: "settings",
-    alias: ["setting", "env", "config"],
+    alias: spaceTolerantAliases("settings", ["setting", "env", "config"]),
     desc: "Bot settings management - View all available setting commands",
     category: "settings",
     react: "⚙️",
@@ -1297,71 +1360,73 @@ cmd({
 },
 async (conn, mek, m, { from, reply, isCreator, prefix, userConfig }) => {
     if (!isCreator) {
-        return reply("*📛 This is an owner command.*");
+        return reply("*📛 Owner only command.*");
     }
     
+    const botName = userConfig.BOT_NAME || 'ERFAN-MD';
+
     const settingsText = `
-┌─⧽ *${userConfig.BOT_NAME || config.BOT_NAME} Settings Menu* ⚙️
+╭──「 ⚙️ *${botName} Settings* 」
 │
-│ 📁 *General Settings*
-│ • welcome on/off
-│ • goodbye on/off
-│ • setwelcome <message>
-│ • setgoodbye <message>
+│ 📁 *General*
+│ › welcome on/off
+│ › goodbye on/off
+│ › setwelcome <message>
+│ › setgoodbye <message>
 │
 │ 📁 *Anti Features*
-│ • antiedit on/off
-│ • editpath inbox/same
-│ • antilink on/off/warn/delete
-│ • antidelete on/off
-│ • anticall on/off
-│ • anticallmsg <message>
+│ › antiedit on/off
+│ › editpath inbox/same
+│ › antilink on/warn/delete/off
+│ › antidelete on/off
+│ › anticall on/off
+│ › anticallmsg <message>
 │
 │ 📁 *Auto Features*
-│ • autoread on/off
-│ • recording on/off
-│ • statusview on/off
-│ • autoreact on/off
-│ • autotyping on/off
-│ • online on/off
+│ › autoread on/off
+│ › recording on/off
+│ › statusview on/off
+│ › statuslike on/off
+│ › autoreact on/off
+│ › online on/off
 │
-│ 📁 *Settings*
-│ • ban @user
-│ • unban @user
-│ • banlist
-│ • sudo @user
-│ • delsudo @user
-│ • listsudo
+│ 📁 *Users*
+│ › ban @user
+│ › unban @user
+│ › banlist
+│ › sudo @user
+│ › delsudo @user
+│ › listsudo
 │
 │ 📁 *Bot Settings*
-│ • mode public/private/inbox
-│ • prefix <new_prefix>
-│ • botname <name>
-│ • ownername <name>
-│ • ownernumber <number>
-│ • description <text>
-│ • botdp <url> or reply to image
-│ • stickername <name>
-│ • delpath same/inbox
-│ • reactemojis 😍,❤️,🔥
-│ • owneremojis 👑,⭐,💎
+│ › mode public/private/inbox
+│ › prefix <new_prefix>
+│ › botname <name>
+│ › ownername <name>
+│ › ownernumber <number>
+│ › description <text>
+│ › botdp <url> or reply image
+│ › stickername <name>
+│ › delpath same/inbox
+│ › reactemojis 😍,❤️,🔥
+│ › owneremojis 👑,⭐,💎
 │
-│ 📁 *Current Status*
-│ • Welcome: ${userConfig.WELCOME || 'false'}
-│ • Goodbye: ${userConfig.GOODBYE || 'false'}
-│ • Anti-Edit: ${userConfig.ANTI_EDIT || 'false'}
-│ • Anti-Link: ${userConfig.ANTI_LINK || 'off'}
-│ • Anti-Delete: ${userConfig.ANTI_DELETE || 'false'}
-│ • Anti-Call: ${userConfig.ANTI_CALL || 'false'}
-│ • Auto-Read: ${userConfig.READ_MESSAGE || 'false'}
-│ • Auto-React: ${userConfig.AUTO_REACT || 'false'}
-│ • Auto-Typing: ${userConfig.AUTO_TYPING || 'false'}
-│ • Always Online: ${userConfig.ALWAYS_ONLINE || 'false'}
-│ • Mode: ${userConfig.MODE || 'public'}
-│ • Prefix: ${userConfig.PREFIX || prefix}
+│ 📊 *Current Status*
+│ › Welcome: ${pretty(userConfig.WELCOME)}
+│ › Goodbye: ${pretty(userConfig.GOODBYE)}
+│ › Anti-Edit: ${pretty(userConfig.ANTI_EDIT)}
+│ › Anti-Link: ${userConfig.ANTI_LINK || 'off'}
+│ › Anti-Delete: ${pretty(userConfig.ANTI_DELETE)}
+│ › Anti-Call: ${pretty(userConfig.ANTI_CALL)}
+│ › Auto-Read: ${pretty(userConfig.READ_MESSAGE)}
+│ › Auto-React: ${pretty(userConfig.AUTO_REACT)}
+│ › Auto-Typing: ${pretty(userConfig.AUTO_TYPING)}
+│ › Always Online: ${pretty(userConfig.ALWAYS_ONLINE)}
+│ › Mode: ${userConfig.MODE || 'public'}
+│ › Prefix: ${userConfig.PREFIX || prefix}
 │
-│ 📌 *Tip:* Use .help <command> for more details
-└──────────────────────────
+│ 💡 *Tip:* Use .help <command> for details
+╰───────────────
     `;
     
     await reply(settingsText);
