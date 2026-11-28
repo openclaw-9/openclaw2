@@ -1,5 +1,56 @@
 // ERFAN-MD — Combined AI Commands Plugin (Updated)
-
+// ============================================================
+//  OLD API REMOVED: pehle saare commands sirf ek hi API
+//  (Gohan Gemini) use karte the. Ab har command apne model
+//  family ki API use karta hai:
+//
+//  • ChatGPT / GPT family  -> OmegaTech GPT-OSS 120B
+//  • DeepSeek family       -> RyuZei DeepSeek
+//  • Gemini family         -> Gohan Gemini
+//  • LLaMA family          -> RyuZei LLaMA
+//  • Gemma family          -> OmegaTech Gemma 4
+//  • Baaki sab (Claude, Grok, Kimi, Lumin, Perplexity,
+//    Math, Islamic, Grammar, Coding...) -> RANDOM provider
+//    (in ka koi matching API nahi hai, is liye pool se
+//    random provider chunta hai — har call par alag ho
+//    sakta hai, fallback ke saath)
+//
+//  FALLBACK (silent): agar ek provider fail ho jaye to
+//  agla provider try hota hai — user ko pata nahi chalta
+//  ke pehla fail hua tha.
+//
+//  IMPORTANT — reply mein kabhi provider/model ka naam
+//  NAHI aata. Header hamesha COMMAND ka naam hota hai
+//  (jaise "Claude 3 Says:"), chahe andar koi bhi API
+//  lagi ho. Is liye random wale commands bhi apna naam
+//  dikhate hain, andar wali API ka nahi.
+//
+//  PLAIN + NUMBERED: har family mein khali naam wali
+//  command bhi hai (jaise .chatgpt) aur numbered bhi
+//  (jaise .chatgpt1, .chatgpt2, .chatgpt3).
+//
+//  PROMPT FIX (v2, 28 Nov 2026 — live test karke lagaya):
+//  1) DeepSeek/Llama (RyuZei) galat zuban mein jawab dete the —
+//     "What is 2+2?" par "cuatro" (Spanish), kabhi Hindi/Arabic.
+//     Fix: LANGUAGE instruction — user ki zuban mein jawab do.
+//     Test: prefix ke saath DeepSeek -> "four", Llama -> "Four".
+//  2) GPT (OmegaTech gpt-oss-120b) sawal ke ilawa jawab deta tha
+//     aur "theek se prompt do" kehta tha. Fix: DIRECT
+//     instruction — seedha jawab do, prompt mat mango.
+//     Test: prefix ke saath capital of Pakistan -> "Islamabad is
+//     the capital of Pakistan."
+//  3) Pollinations free limit: 100 replies/day per IP. Limit
+//     khatam ho to "Free limit reached..." text aata hai — ab
+//     ye text jawab NAHI mana jata, fail mana jata hai aur
+//     agla provider try hota hai.
+//
+//  APIs (28 Nov 2026, sab live test karke lagayi gayi):
+//  • Gohan Gemini    — api-gohan-v1.onrender.com/ai/gemini
+//  • RyuZei DeepSeek — api.ryuzei.xyz/ai/deepseek
+//  • RyuZei LLaMA    — api.ryuzei.xyz/ai/llama
+//  • OmegaTech GPT-OSS 120B / Gemini Flash-Lite / Gemma 4
+//    — api.omegatech.app/api/ai/Deep-ai
+//  • Pollinations    — text.pollinations.ai (plain text)
 // ============================================================
 import { fileURLToPath } from 'url';
 import path from 'path';
@@ -13,44 +64,68 @@ const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
   '(KHTML, like Gecko) Chrome/124.0 Safari/537.36';
 
+// ------------------------------------------------------------
+//  Prompt instructions — har sawal ke saath bheji jati hain
+// ------------------------------------------------------------
+// LANG: model user ki zuban mein jawab de (English manga ho to
+// sirf English — Hindi/Arabic/Spanish kabhi nahi).
+const PREFIX_LANG =
+  "Reply in the same language as the user's message. If the user " +
+  'wrote in English, reply in English only - never use Hindi, ' +
+  'Arabic, Spanish or any other language. ';
+// DIRECT: seedha jawab do — "theek se prompt do" mat kaho.
+const PREFIX_DIRECT =
+  "Answer the user's question directly and completely. Do not ask " +
+  'the user to rephrase the question or to give a better prompt. ' +
+  'Do not refuse or say you need more details - just give the best ' +
+  'possible answer. ';
+const PREFIX_GPT = PREFIX_DIRECT + PREFIX_LANG;
+
 // ================= API PROVIDERS =================
 // Har provider: build(q) -> URL, parse(json) -> jawab ka text.
 // Pollinations plain text deta hai (JSON nahi) — isText: true.
 const PROVIDERS = {
   gemini: {
+    prefix: PREFIX_LANG,
     build: (q) => `https://api-gohan-v1.onrender.com/ai/gemini?text=${enc(q)}`,
     parse: (j) => j && j.result && j.result.text,
     timeout: 60000, // Render cold start ke liye zyada
   },
   deepseek: {
+    prefix: PREFIX_LANG,
     build: (q) => `https://api.ryuzei.xyz/ai/deepseek?text=${enc(q)}`,
     parse: (j) => j && j.data && j.data.response,
     timeout: 30000,
   },
   llama: {
+    prefix: PREFIX_LANG,
     build: (q) => `https://api.ryuzei.xyz/ai/llama?text=${enc(q)}`,
     parse: (j) => j && j.data && j.data.response,
     timeout: 30000,
   },
   gpt: {
+    prefix: PREFIX_GPT,
     build: (q) =>
       `https://api.omegatech.app/api/ai/Deep-ai?action=chat&message=${enc(q)}&model=gpt-oss-120b`,
     parse: (j) => j && j.data && j.data.reply,
     timeout: 30000,
   },
   geminiFlash: {
+    prefix: PREFIX_LANG,
     build: (q) =>
       `https://api.omegatech.app/api/ai/Deep-ai?action=chat&message=${enc(q)}&model=gemini-2.5-flash-lite`,
     parse: (j) => j && j.data && j.data.reply,
     timeout: 30000,
   },
   gemma: {
+    prefix: PREFIX_LANG,
     build: (q) =>
       `https://api.omegatech.app/api/ai/Deep-ai?action=chat&message=${enc(q)}&model=gemma-4`,
     parse: (j) => j && j.data && j.data.reply,
     timeout: 30000,
   },
   pollinations: {
+    prefix: PREFIX_LANG,
     build: (q) => `https://text.pollinations.ai/${enc(q)}?model=openai`,
     parse: null, // plain text jawab
     timeout: 30000,
@@ -78,7 +153,7 @@ function shuffle(arr) {
 }
 
 async function callProvider(p, q) {
-  const { data } = await axios.get(p.build(q), {
+  const { data } = await axios.get(p.build((p.prefix || '') + q), {
     timeout: p.timeout,
     responseType: p.isText ? 'text' : 'json',
     headers: {
@@ -89,6 +164,8 @@ async function callProvider(p, q) {
   if (p.isText) {
     const t = typeof data === 'string' ? data.trim() : '';
     if (!t) throw new Error('empty answer');
+    // Pollinations daily limit (100/day/IP) — ye jawab nahi, fail hai.
+    if (t.includes('Free limit reached')) throw new Error('Pollinations daily limit reached');
     return t;
   }
   if (data && (data.status === false || data.success === false)) {
