@@ -1,4 +1,59 @@
-
+// ERFAN-MD — Combined AI Commands Plugin (Updated)
+// ============================================================
+//  OLD API REMOVED: pehle saare commands sirf ek hi API
+//  (Gohan Gemini) use karte the. Ab har command apne model
+//  family ki API use karta hai:
+//
+//  • ChatGPT / GPT family  -> Gohan Gemini (Gemini API)
+//  • DeepSeek family       -> RyuZei DeepSeek
+//  • Gemini family         -> Gohan Gemini
+//  • LLaMA family          -> RyuZei LLaMA
+//  • Gemma family          -> OmegaTech Gemma 4
+//  • Baaki sab (Claude, Grok, Kimi, Lumin, Perplexity,
+//    Math, Islamic, Grammar, Coding...) -> RANDOM provider
+//    (in ka koi matching API nahi hai, is liye pool se
+//    random provider chunta hai — har call par alag ho
+//    sakta hai, fallback ke saath)
+//
+//  CHATGPT API REMOVED (28 Nov 2026): OmegaTech GPT-OSS 120B
+//  poori tarah hata di — ChatGPT/GPT family ki saari commands
+//  (chatgpt, chatgpt1-4, chatgptplus, gpt, gpt35, gpt4, gpt4o,
+//  gpt4omini, codegpt) ab Gemini API (Gohan) use karti hain.
+//  Fallback pool mein bhi GPT provider nahi raha.
+//
+//  FALLBACK (silent): agar ek provider fail ho jaye to
+//  agla provider try hota hai — user ko pata nahi chalta
+//  ke pehla fail hua tha.
+//
+//  IMPORTANT — reply mein kabhi provider/model ka naam
+//  NAHI aata. Header hamesha COMMAND ka naam hota hai
+//  (jaise "Claude 3 Says:"), chahe andar koi bhi API
+//  lagi ho. Is liye random wale commands bhi apna naam
+//  dikhate hain, andar wali API ka nahi.
+//
+//  PLAIN + NUMBERED: har family mein khali naam wali
+//  command bhi hai (jaise .chatgpt) aur numbered bhi
+//  (jaise .chatgpt1, .chatgpt2, .chatgpt3).
+//
+//  PROMPT FIX (v2, 28 Nov 2026 — live test karke lagaya):
+//  1) DeepSeek/Llama (RyuZei) galat zuban mein jawab dete the —
+//     "What is 2+2?" par "cuatro" (Spanish), kabhi Hindi/Arabic.
+//     Fix: LANGUAGE instruction — user ki zuban mein jawab do.
+//     Test: prefix ke saath DeepSeek -> "four", Llama -> "Four".
+//  2) Pollinations free limit: 100 replies/day per IP. Limit
+//     khatam ho to "Free limit reached..." text aata hai — ab
+//     ye text jawab NAHI mana jata, fail mana jata hai aur
+//     agla provider try hota hai.
+//     (GPT provider hatane ke baad DIRECT instruction ki zaroorat
+//     nahi rahi — Gemini seedha jawab deta hai.)
+//
+//  APIs (28 Nov 2026, sab live test karke lagayi gayi):
+//  • Gohan Gemini    — api-gohan-v1.onrender.com/ai/gemini
+//  • RyuZei DeepSeek — api.ryuzei.xyz/ai/deepseek
+//  • RyuZei LLaMA    — api.ryuzei.xyz/ai/llama
+//  • OmegaTech Gemini Flash-Lite / Gemma 4
+//    — api.omegatech.app/api/ai/Deep-ai
+//  • Pollinations    — text.pollinations.ai (plain text)
 // ============================================================
 import { fileURLToPath } from 'url';
 import path from 'path';
@@ -21,13 +76,6 @@ const PREFIX_LANG =
   "Reply in the same language as the user's message. If the user " +
   'wrote in English, reply in English only - never use Hindi, ' +
   'Arabic, Spanish or any other language. ';
-// DIRECT: seedha jawab do — "theek se prompt do" mat kaho.
-const PREFIX_DIRECT =
-  "Answer the user's question directly and completely. Do not ask " +
-  'the user to rephrase the question or to give a better prompt. ' +
-  'Do not refuse or say you need more details - just give the best ' +
-  'possible answer. ';
-const PREFIX_GPT = PREFIX_DIRECT + PREFIX_LANG;
 
 // ================= API PROVIDERS =================
 // Har provider: build(q) -> URL, parse(json) -> jawab ka text.
@@ -49,13 +97,6 @@ const PROVIDERS = {
     prefix: PREFIX_LANG,
     build: (q) => `https://api.ryuzei.xyz/ai/llama?text=${enc(q)}`,
     parse: (j) => j && j.data && j.data.response,
-    timeout: 30000,
-  },
-  gpt: {
-    prefix: PREFIX_GPT,
-    build: (q) =>
-      `https://api.omegatech.app/api/ai/Deep-ai?action=chat&message=${enc(q)}&model=gpt-oss-120b`,
-    parse: (j) => j && j.data && j.data.reply,
     timeout: 30000,
   },
   geminiFlash: {
@@ -84,11 +125,10 @@ const PROVIDERS = {
 // Fallback order — pehle family ka apna provider, phir baaki
 // (tez tareen pehle, taake jawab jaldi aaye).
 const CHAINS = {
-  gemini: ['gemini', 'geminiFlash', 'pollinations', 'gpt', 'deepseek', 'llama', 'gemma'],
-  deepseek: ['deepseek', 'pollinations', 'gpt', 'geminiFlash', 'llama', 'gemma', 'gemini'],
-  llama: ['llama', 'pollinations', 'gpt', 'deepseek', 'geminiFlash', 'gemma', 'gemini'],
-  gpt: ['gpt', 'pollinations', 'geminiFlash', 'deepseek', 'llama', 'gemma', 'gemini'],
-  gemma: ['gemma', 'pollinations', 'gpt', 'deepseek', 'llama', 'geminiFlash', 'gemini'],
+  gemini: ['gemini', 'geminiFlash', 'pollinations', 'deepseek', 'llama', 'gemma'],
+  deepseek: ['deepseek', 'pollinations', 'geminiFlash', 'llama', 'gemma', 'gemini'],
+  llama: ['llama', 'pollinations', 'deepseek', 'geminiFlash', 'gemma', 'gemini'],
+  gemma: ['gemma', 'pollinations', 'deepseek', 'llama', 'geminiFlash', 'gemini'],
 };
 
 function shuffle(arr) {
@@ -164,18 +204,18 @@ const makeAICommand = ({ pattern, title, desc, react, family }) => {
 
 // ================= COMMAND LIST =================
 const commands = [
-    // ---- CHATGPT / GPT FAMILY (GPT API) ----
-    { pattern: 'chatgpt',     title: 'ChatGPT',         desc: 'Ask ChatGPT AI.',          react: '🤖', family: 'gpt' },
-    { pattern: 'chatgpt1',    title: 'ChatGPT 1',       desc: 'Ask ChatGPT 1 AI.',        react: '🤖', family: 'gpt' },
-    { pattern: 'chatgpt2',    title: 'ChatGPT 2',       desc: 'Ask ChatGPT 2 AI.',        react: '🤖', family: 'gpt' },
-    { pattern: 'chatgpt3',    title: 'ChatGPT 3',       desc: 'Ask ChatGPT 3 AI.',        react: '🤖', family: 'gpt' },
-    { pattern: 'chatgpt4',    title: 'ChatGPT 4',       desc: 'Ask ChatGPT 4 AI.',        react: '🤖', family: 'gpt' },
-    { pattern: 'chatgptplus', title: 'ChatGPT Plus',    desc: 'Ask ChatGPT Plus AI.',     react: '🤖', family: 'gpt' },
-    { pattern: 'gpt',         title: 'GPT',             desc: 'Ask GPT AI.',              react: '🤖', family: 'gpt' },
-    { pattern: 'gpt35',       title: 'GPT-3.5 Turbo',   desc: 'Ask GPT-3.5 Turbo AI.',    react: '🤖', family: 'gpt' },
-    { pattern: 'gpt4',        title: 'GPT-4',           desc: 'Ask GPT-4 AI.',            react: '🤖', family: 'gpt' },
-    { pattern: 'gpt4o',       title: 'GPT-4o',          desc: 'Ask GPT-4o AI.',           react: '🤖', family: 'gpt' },
-    { pattern: 'gpt4omini',   title: 'GPT-4o Mini',     desc: 'Ask GPT-4o Mini AI.',      react: '🤖', family: 'gpt' },
+    // ---- CHATGPT / GPT FAMILY (Gemini API) ----
+    { pattern: 'chatgpt',     title: 'ChatGPT',         desc: 'Ask ChatGPT AI.',          react: '🤖', family: 'gemini' },
+    { pattern: 'chatgpt1',    title: 'ChatGPT 1',       desc: 'Ask ChatGPT 1 AI.',        react: '🤖', family: 'gemini' },
+    { pattern: 'chatgpt2',    title: 'ChatGPT 2',       desc: 'Ask ChatGPT 2 AI.',        react: '🤖', family: 'gemini' },
+    { pattern: 'chatgpt3',    title: 'ChatGPT 3',       desc: 'Ask ChatGPT 3 AI.',        react: '🤖', family: 'gemini' },
+    { pattern: 'chatgpt4',    title: 'ChatGPT 4',       desc: 'Ask ChatGPT 4 AI.',        react: '🤖', family: 'gemini' },
+    { pattern: 'chatgptplus', title: 'ChatGPT Plus',    desc: 'Ask ChatGPT Plus AI.',     react: '🤖', family: 'gemini' },
+    { pattern: 'gpt',         title: 'GPT',             desc: 'Ask GPT AI.',              react: '🤖', family: 'gemini' },
+    { pattern: 'gpt35',       title: 'GPT-3.5 Turbo',   desc: 'Ask GPT-3.5 Turbo AI.',    react: '🤖', family: 'gemini' },
+    { pattern: 'gpt4',        title: 'GPT-4',           desc: 'Ask GPT-4 AI.',            react: '🤖', family: 'gemini' },
+    { pattern: 'gpt4o',       title: 'GPT-4o',          desc: 'Ask GPT-4o AI.',           react: '🤖', family: 'gemini' },
+    { pattern: 'gpt4omini',   title: 'GPT-4o Mini',     desc: 'Ask GPT-4o Mini AI.',      react: '🤖', family: 'gemini' },
 
     // ---- CLAUDE FAMILY (no Claude API — random provider) ----
     { pattern: 'claude',      title: 'Claude',          desc: 'Ask Claude AI.',           react: '🤖', family: 'random' },
@@ -209,7 +249,7 @@ const commands = [
     { pattern: 'deepseekcoder', title: 'DeepSeek Coder', desc: 'Ask DeepSeek Coder AI.', react: '🔍', family: 'deepseek' },
 
     // ---- CODING SPECIALIST AIs ----
-    { pattern: 'codegpt',     title: 'CodeGPT',          desc: 'Ask CodeGPT AI.',           react: '💻', family: 'gpt' },
+    { pattern: 'codegpt',     title: 'CodeGPT',          desc: 'Ask CodeGPT AI.',           react: '💻', family: 'gemini' },
     { pattern: 'claudecode',  title: 'Claude Code',      desc: 'Ask Claude Code AI.',       react: '🖥️', family: 'random' },
     { pattern: 'claudecoder', title: 'Claude Coder',     desc: 'Ask Claude Coder AI.',      react: '🖥️', family: 'random' },
     { pattern: 'cursorai',    title: 'Cursor AI',        desc: 'Ask Cursor AI AI.',         react: '🖱️', family: 'random' },
