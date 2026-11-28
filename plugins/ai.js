@@ -1,41 +1,5 @@
 // ERFAN-MD — Combined AI Commands Plugin (Updated)
-// ============================================================
-//  OLD API REMOVED: pehle saare commands sirf ek hi API
-//  (Gohan Gemini) use karte the. Ab har command apne model
-//  family ki API use karta hai:
-//
-//  • ChatGPT / GPT family  -> OmegaTech GPT-OSS 120B
-//  • DeepSeek family       -> RyuZei DeepSeek
-//  • Gemini family         -> Gohan Gemini
-//  • LLaMA family          -> RyuZei LLaMA
-//  • Gemma family          -> OmegaTech Gemma 4
-//  • Baaki sab (Claude, Grok, Kimi, Lumin, Perplexity,
-//    Math, Islamic, Grammar, Coding...) -> RANDOM provider
-//    (in ka koi matching API nahi hai, is liye pool se
-//    random provider chunta hai — har call par alag ho
-//    sakta hai, fallback ke saath)
-//
-//  FALLBACK (silent): agar ek provider fail ho jaye to
-//  agla provider try hota hai — user ko pata nahi chalta
-//  ke pehla fail hua tha.
-//
-//  IMPORTANT — reply mein kabhi provider/model ka naam
-//  NAHI aata. Header hamesha COMMAND ka naam hota hai
-//  (jaise "Claude 3 Says:"), chahe andar koi bhi API
-//  lagi ho. Is liye random wale commands bhi apna naam
-//  dikhate hain, andar wali API ka nahi.
-//
-//  PLAIN + NUMBERED: har family mein khali naam wali
-//  command bhi hai (jaise .chatgpt) aur numbered bhi
-//  (jaise .chatgpt1, .chatgpt2, .chatgpt3).
-//
-//  APIs (28 Nov 2026, sab live test karke lagayi gayi):
-//  • Gohan Gemini    — api-gohan-v1.onrender.com/ai/gemini
-//  • RyuZei DeepSeek — api.ryuzei.xyz/ai/deepseek
-//  • RyuZei LLaMA    — api.ryuzei.xyz/ai/llama
-//  • OmegaTech GPT-OSS 120B / Gemini Flash-Lite / Gemma 4
-//    — api.omegatech.app/api/ai/Deep-ai
-//  • Pollinations    — text.pollinations.ai (plain text)
+
 // ============================================================
 import { fileURLToPath } from 'url';
 import path from 'path';
